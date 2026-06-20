@@ -1,0 +1,26 @@
+{
+  "name": "ERP CV. Setia Dadi - Penggilingan Padi",
+  "short_name": "ERP Setia Dadi",
+  "description": "Sistem Manajemen ERP Penggilingan Padi CV. Setia Dadi",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#F7F3EA",
+  "theme_color": "#2A3F2A",
+  "lang": "id",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
