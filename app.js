@@ -8334,7 +8334,22 @@ function renderDashboard(target){
 
   renderChartKas();
   renderChartProduk();
-  renderChartRendemen();
+  // BUG FIX KRITIS: renderChartRendemen() dihapus dari chain ini.
+  // Fungsi tersebut mencari document.getElementById('chartRendemen') — sebuah ID
+  // yang TIDAK PERNAH ADA di template HTML dashboard manapun (canvas yang ada di
+  // HTML adalah 'chartRendemenBulan', bukan 'chartRendemen'). Tanpa pengecekan
+  // if(!ctx) return di dalamnya, new Chart(null, ...) melempar exception
+  // "Cannot read properties of null (reading 'canvas')" — dan karena seluruh
+  // pemanggilan chart ini bersifat sinkron berurutan, exception tersebut
+  // MENGHENTIKAN seluruh sisa pemanggilan setelahnya (renderChartPvP,
+  // renderChartProfitBatch, renderChartRendemenBulan, renderChartForecastGabah)
+  // sehingga canvas-canvas itu TIDAK PERNAH digambar Chart.js sama sekali —
+  // baik di layar maupun saat dicetak. Ini akar sesungguhnya dari laporan
+  // "hasil cetak hanya judul section tanpa isi card": bukan bug di
+  // printDashboard()/buildDashboardPrintHtml() (keduanya sudah benar — clone
+  // dan snapshot canvas bekerja sempurna untuk chart yang berhasil digambar),
+  // melainkan exception tersembunyi yang membuat sebagian besar chart memang
+  // kosong sejak sebelum tombol cetak diklik.
   renderChartPvP();
   renderChartProfitBatch();
   renderChartRendemenBulan();
@@ -8406,6 +8421,12 @@ function renderChartRendemen(){
   const dataT2 = rows.map(r=> r.gabah>0 ? ((Number(r.premium||0)+Number(r.medium||0))/r.gabah*100) : 0);
   const hasPKData = dataT1.some(v=>v!==null);
   const ctx = document.getElementById('chartRendemen');
+  // Guard pengaman: fungsi ini sebelumnya dipanggil tanpa cek elemen, menyebabkan
+  // new Chart(null, ...) melempar exception dan mematahkan chain render chart
+  // lain di renderDashboard(). Saat ini fungsi tidak dipanggil di manapun
+  // (canvas 'chartRendemen' tidak ada di HTML manapun — yang ada 'chartRendemenBulan'),
+  // tapi guard ini dipertahankan agar aman dipanggil ulang di masa depan.
+  if(!ctx) return;
   const datasets = [];
   if(hasPKData){
     datasets.push({
