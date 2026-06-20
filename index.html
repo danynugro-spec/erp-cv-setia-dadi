@@ -443,7 +443,16 @@
     display:none; position:fixed;
     background:var(--white); border:1px solid var(--line);
     border-radius:10px; box-shadow:0 6px 20px rgba(15,23,42,0.14);
-    min-width:150px; z-index:600; padding:4px;
+    min-width:150px; z-index:1100; padding:4px;
+    /* BUG-002 FIX: z-index dinaikkan dari 600 ke 1100. Sebelumnya, dropdown
+       unduh ini selalu berada DI BAWAH .modal-overlay (z-index:1000) karena
+       elemen dropdown di-append ke document.body, terpisah dari modal yang
+       memunculkannya. Saat tombol "Unduh" diklik di dalam modal (seperti pada
+       Kuitansi), dropdown PDF/JPEG memang muncul di DOM, tapi secara visual
+       tertutup oleh konten modal di atasnya — klik pada area itu jatuh ke
+       konten modal, bukan ke tombol dropdown. Inilah akar dari laporan
+       "tombol Unduh tidak berfungsi": dropdown-nya sendiri tidak bisa diklik
+       sama sekali saat modal aktif, terlepas dari logika unduh di baliknya. */
   }
   .dl-menu.open{ display:block; }
   .dl-menu button{

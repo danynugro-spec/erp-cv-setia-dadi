@@ -2186,13 +2186,78 @@ function dlMenuReport(sourceElId, reportTitle, subtitle){
   };
   return `<button class="btn btn-secondary dl-btn" style="width:auto;" onclick="event.stopPropagation();_openDlMenu(this,'${key}')">⬇ Unduh <span class="dl-caret">▾</span></button>`;
 }
-function dlMenuDoc(filenamePrefix, elId){
+// BUG-002 FIX: dlMenuDoc() sekarang menerima parameter opsional ke-3 `directPdf`.
+// Saat true, opsi "PDF" di dropdown akan langsung mengunduh file PDF sungguhan
+// (via html2pdf.js, dengan Blob + save() — TIDAK membuka dialog print manual),
+// dengan nama file otomatis dari filenamePrefix. Saat false/tidak diisi (default),
+// perilaku LAMA dipertahankan persis seperti sebelumnya (downloadDocPdf — buka
+// window baru + instruksi "Save as PDF" manual via window.print()), agar dokumen
+// lain (Invoice, Surat Jalan, dll) yang sudah memanggil dlMenuDoc() tanpa argumen
+// ke-3 TIDAK terpengaruh sama sekali oleh perbaikan ini.
+function dlMenuDoc(filenamePrefix, elId, directPdf){
   const key = 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
   _DL_REGISTRY[key] = {
-    pdf:  ()=>downloadDocPdf(filenamePrefix),
+    pdf:  directPdf ? ()=>downloadDocPdfDirect(elId||'docToPrint', filenamePrefix)
+                     : ()=>downloadDocPdf(filenamePrefix),
     jpeg: ()=>downloadJpegFromEl(elId||'docToPrint', filenamePrefix),
   };
   return `<button class="btn btn-secondary dl-btn" style="width:auto;" onclick="event.stopPropagation();_openDlMenu(this,'${key}')">⬇ Unduh <span class="dl-caret">▾</span></button>`;
+}
+
+// Load html2pdf.js dynamically jika belum tersedia (script sudah dimuat eager di
+// index.html, tapi loader defensif ini berjaga-jaga jika CDN sempat gagal saat
+// halaman pertama dibuka — sama pola dengan _loadHtml2Canvas yang sudah ada).
+function _loadHtml2Pdf(callback){
+  if(typeof html2pdf !== 'undefined'){ callback(); return; }
+  const s = document.createElement('script');
+  s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+  s.onload = callback;
+  s.onerror = ()=>showToast('Gagal memuat library PDF. Cek koneksi internet.');
+  document.head.appendChild(s);
+}
+
+/**
+ * BUG-002 FIX — Unduh PDF langsung (auto-download), tanpa dialog print manual.
+ * Dipakai khusus oleh Kuitansi (lihat bukaKuitansi() dan showKuitansiPembayaran()).
+ *
+ * Akar masalah BUG-002: tombol "Unduh" → PDF di kuitansi sebelumnya memanggil
+ * downloadDocPdf(), yang TIDAK pernah benar-benar membuat file PDF — fungsi itu
+ * hanya membuka window baru berisi HTML, lalu memicu window.print() dan
+ * menampilkan instruksi teks "Klik Cetak → pilih Save as PDF → Simpan" untuk
+ * dilakukan MANUAL oleh user. Tidak ada Blob, tidak ada jsPDF/html2pdf, tidak
+ * ada proses save() otomatis — persis sesuai gejala "tombol tidak berfungsi"
+ * yang dilaporkan (user mengklik tombol, yang muncul cuma dialog print browser,
+ * bukan file ter-unduh).
+ *
+ * Fungsi ini memakai html2pdf.js (sudah dimuat di index.html, sebelumnya 0 kali
+ * dipakai di seluruh app.js) untuk benar-benar men-generate file PDF dari elemen
+ * DOM yang SEDANG TAMPIL di modal (bukan window terpisah), sehingga seluruh CSS
+ * aplikasi — termasuk variabel warna (--ink-soft, --rice-green, dst) yang dipakai
+ * buildKuitansiDocHtml() — otomatis ter-apply tanpa perlu disalin ulang. Hasilnya
+ * file .pdf yang benar-benar terunduh ke folder Downloads, identik tampilannya
+ * dengan kuitansi yang ada di layar.
+ */
+function downloadDocPdfDirect(elId, filenamePrefix){
+  const source = document.getElementById(elId);
+  if(!source){ showToast('Dokumen tidak ditemukan.'); return; }
+  showToast('Menyiapkan PDF...');
+  _loadHtml2Pdf(()=>{
+    // Nama file: {NoDokumen}-{YYYYMMDD}.pdf — tanggal tanpa dash agar ringkas
+    // dan konsisten dengan format yang umum dipakai untuk arsip dokumen.
+    const tglRingkas = todayStr().replace(/-/g,'');
+    const filename = (filenamePrefix||'dokumen').replace(/['"]/g,'') + '-' + tglRingkas + '.pdf';
+    const opts = {
+      margin:       [12, 10, 12, 10], // mm: atas, kiri, bawah, kanan
+      filename:     filename,
+      image:        { type:'jpeg', quality:0.98 },
+      html2canvas:  { scale:2, useCORS:true, allowTaint:true, backgroundColor:'#ffffff', logging:false },
+      jsPDF:        { unit:'mm', format:'a4', orientation:'portrait' },
+      pagebreak:    { mode:['avoid-all','css','legacy'] },
+    };
+    html2pdf().set(opts).from(source).save()
+      .then(()=>{ showToast('PDF berhasil diunduh.'); })
+      .catch(e=>{ console.error(e); showToast('Gagal membuat PDF.'); });
+  });
 }
 
 // Load html2canvas dynamically jika belum tersedia
@@ -6177,7 +6242,7 @@ function showKuitansiPembayaran(supplier, tanggal, keterangan, totalBayar, total
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
       <button class="btn btn-primary" style="width:auto;" onclick="printDoc()">🖨 Cetak Kuitansi</button>
-      ${dlMenuDoc('kuitansi_'+noKuitansi,'docToPrint')}
+      ${dlMenuDoc(noKuitansi,'docToPrint',true)}
       <button class="btn btn-secondary" onclick="closeModal()">Tutup</button>
     </div>
     ${buildKuitansiDocHtml(kuitansiRecord)}
@@ -6364,7 +6429,7 @@ function bukaKuitansi(id){
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
       <button class="btn btn-primary" style="width:auto;" onclick="printDoc()">🖨 Cetak</button>
-      ${dlMenuDoc('kuitansi_'+k.noKuitansi,'docToPrint')}
+      ${dlMenuDoc(k.noKuitansi,'docToPrint',true)}
       <button class="btn btn-secondary" style="width:auto;border-color:var(--rice-green);color:var(--rice-green-dark);" onclick="closeModal();setTimeout(()=>showKartuSupplier('${esc(k.supplier)}'),80)">🧾 Kartu Hutang</button>
       <button class="btn btn-danger btn-sm" style="width:auto;" onclick="hapusKuitansi('${k.id}')">🗑 Hapus</button>
       <button class="btn btn-secondary" onclick="closeModal()">Tutup</button>
