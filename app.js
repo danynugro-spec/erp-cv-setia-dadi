@@ -2443,6 +2443,228 @@ function printReport(sourceElId, reportTitle, subtitle){
   setTimeout(()=>w.print(), 300);
 }
 
+/* ============================================================
+   BUG FIX — Cetak Dashboard mencetak elemen kosong
+   ============================================================
+   Akar masalah: printReport()/buildReportHtml() memakai REPORT_STYLES,
+   sebuah stylesheet KHUSUS UNTUK LAPORAN BERBASIS TABEL (Pembelian,
+   Penjualan, dll). REPORT_STYLES sengaja menyembunyikan .kpi, .grid,
+   .section-divider dengan "display:none !important" karena laporan
+   tabel memang tidak butuh kartu KPI dekoratif saat dicetak.
+   Dashboard TIDAK PUNYA TABEL — seluruh isinya berupa .grid berisi
+   .kpi, dan .card berisi <canvas> chart. Saat dicetak lewat jalur
+   yang sama, SEMUA kpi-grid disembunyikan oleh aturan di atas,
+   menyisakan hanya judul section (yang kebetulan bukan elemen
+   .section-divider, melainkan <div> berstyle inline) — sesuai
+   gejala yang dilaporkan.
+
+   Solusi: clone elemen dashboard APA ADANYA (tanpa menghapus apapun
+   selain tombol/elemen interaktif), lalu muat ulang CSS ASLI aplikasi
+   (diambil langsung dari <style> di index.html, bukan stylesheet
+   laporan terpisah) sehingga .kpi, .grid, .card, warna border, dan
+   badge tetap identik dengan tampilan layar. Tidak membuat halaman
+   atau ringkasan baru — murni clone + reuse CSS yang sudah ada.
+   ============================================================ */
+
+/** Ambil seluruh CSS aplikasi utama persis seperti yang dipakai layar saat ini. */
+function _getAppStylesheetText(){
+  const styleEl = document.querySelector('style');
+  return styleEl ? styleEl.textContent : '';
+}
+
+/**
+ * Bangun HTML cetak Dashboard: clone elemen sumber utuh (identik dengan
+ * tampilan layar), snapshot setiap <canvas> Chart.js jadi <img> (karena
+ * canvas tidak bisa di-print lintas window terpisah), buang HANYA elemen
+ * yang murni interaktif (tombol, action sheet) — TIDAK menghapus/
+ * menyembunyikan .kpi/.grid/.card seperti jalur laporan tabel.
+ */
+function buildDashboardPrintHtml(sourceElId, reportTitle, subtitle){
+  const source = document.getElementById(sourceElId);
+  if(!source) return null;
+  const now = new Date();
+  const printedAt = now.toLocaleDateString('id-ID', {day:'2-digit', month:'long', year:'numeric'}) +
+                     ' ' + now.toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit'});
+
+  const clone = source.cloneNode(true);
+
+  // Snapshot setiap Chart.js canvas yang sedang tampil di layar menjadi <img>,
+  // persis nilai pixel yang dilihat user saat ini (bukan render ulang/ringkasan).
+  const liveCanvases = source.querySelectorAll('canvas');
+  const clonedCanvases = clone.querySelectorAll('canvas');
+  liveCanvases.forEach((liveCanvas, i)=>{
+    const clonedCanvas = clonedCanvases[i];
+    if(!clonedCanvas) return;
+    try{
+      const img = document.createElement('img');
+      img.src = liveCanvas.toDataURL('image/png');
+      img.style.cssText = 'max-width:100%; height:auto;';
+      clonedCanvas.replaceWith(img);
+    }catch(e){}
+  });
+
+  // Hanya buang elemen yang murni kontrol UI (tombol aksi, dropdown unduh) —
+  // BUKAN .kpi/.grid/.card/.section-divider seperti REPORT_STYLES.
+  clone.querySelectorAll('button, .btn, .dl-wrap, .action-sheet').forEach(el=>el.remove());
+  // Banner alarm (Maintenance/Stok) memakai onclick navigasi — aman dibiarkan
+  // tampil apa adanya karena bukan kontrol form, murni informasi status.
+
+  return `
+    <div class="letterhead">
+      <div class="company">
+        <div class="mark"><img src="${LOGO_DATA_URI}" alt="Logo"></div>
+        <div>
+          <h1>CV. Setia Dadi</h1>
+          <div class="tagline">Penggilingan Padi &mdash; Sistem Manajemen ERP</div>
+        </div>
+      </div>
+      <div class="meta">Dicetak: ${printedAt}</div>
+    </div>
+    <h2 class="report-title">${esc(reportTitle)}</h2>
+    ${subtitle ? `<div class="report-sub">${subtitle}</div>` : ''}
+    ${clone.innerHTML}
+    <div class="print-foot">
+      <div>CV. Setia Dadi &mdash; Dokumen ini dihasilkan otomatis oleh sistem ERP.</div>
+      <div>Dicetak: ${printedAt}</div>
+    </div>
+  `;
+}
+
+/**
+ * Cetak Dashboard — versi yang identik dengan tampilan layar.
+ * Memuat CSS ASLI aplikasi (bukan REPORT_STYLES) sehingga seluruh
+ * .kpi-grid, .kpi, .card, dan <canvas> (sudah jadi <img>) tetap utuh,
+ * plus print-color-adjust:exact agar warna border/badge tidak hilang
+ * saat dicetak (perilaku default browser membuang background/border
+ * berwarna kecuali diizinkan eksplisit).
+ */
+function printDashboard(sourceElId, reportTitle, subtitle){
+  const html = buildDashboardPrintHtml(sourceElId, reportTitle, subtitle);
+  if(!html){ showToast('Konten dashboard tidak ditemukan.'); return; }
+  const appCss = _getAppStylesheetText();
+  const w = window.open('', '_blank');
+  w.document.write(`
+    <html><head><title>${esc(reportTitle)} - CV. Setia Dadi</title>
+    <style>
+      ${appCss}
+      /* Letterhead & footer cetak (sama dengan laporan lain) */
+      body{padding:24px; background:#fff;}
+      .letterhead{display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #E5E7EB; padding-bottom:12px; margin-bottom:14px;}
+      .letterhead .company{display:flex; align-items:center; gap:12px;}
+      .letterhead .mark{width:44px; height:44px; border:1px solid #E5E7EB; border-radius:8px; overflow:hidden; display:flex; align-items:center; justify-content:center; flex-shrink:0;}
+      .letterhead .mark img{width:100%; height:100%; object-fit:cover;}
+      .letterhead h1{font-size:1.1rem; color:#1F2430; font-weight:800;}
+      .letterhead .tagline{font-size:0.72rem; color:#6B7280; margin-top:2px;}
+      .letterhead .meta{text-align:right; font-size:0.72rem; color:#6B7280; font-family:monospace;}
+      h2.report-title{font-size:1rem; color:#1F2430; margin:0 0 4px; font-weight:700;}
+      .report-sub{font-size:0.78rem; color:#6B7280; margin-bottom:14px;}
+      .print-foot{margin-top:24px; font-size:0.72rem; color:#9CA3AF; display:flex; justify-content:space-between; border-top:1px solid #E5E7EB; padding-top:8px;}
+      /* Pastikan warna (border-left kpi, badge, banner alarm) ikut tercetak */
+      *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color-adjust:exact !important; }
+      @media print{
+        body{padding:0;}
+        @page{size:A4 portrait; margin:12mm 10mm 12mm 10mm;}
+        .grid{page-break-inside:avoid;}
+        .kpi, .card{page-break-inside:avoid;}
+      }
+    </style>
+    </head><body>${html}</body></html>
+  `);
+  w.document.close();
+  w.focus();
+  setTimeout(()=>w.print(), 400); // sedikit lebih lama agar <img> chart sempat ter-render di window baru
+}
+
+/** Unduh Dashboard sebagai PDF — sama persis prinsipnya dengan printDashboard(), via dialog Save as PDF. */
+function downloadDashboardPdf(sourceElId, reportTitle, subtitle){
+  const html = buildDashboardPrintHtml(sourceElId, reportTitle, subtitle);
+  if(!html){ showToast('Konten dashboard tidak ditemukan.'); return; }
+  const appCss = _getAppStylesheetText();
+  const w = window.open('','_blank');
+  w.document.write(`
+    <html><head>
+      <title>${esc(reportTitle)} - CV. Setia Dadi</title>
+      <meta charset="utf-8">
+      <style>
+        ${appCss}
+        body{padding:0; margin:0; background:#fff;}
+        @media screen{ body{padding:24px; max-width:1100px; margin:0 auto;} }
+        .letterhead{display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #E5E7EB; padding-bottom:12px; margin-bottom:14px;}
+        .letterhead .company{display:flex; align-items:center; gap:12px;}
+        .letterhead .mark{width:44px; height:44px; border:1px solid #E5E7EB; border-radius:8px; overflow:hidden; display:flex; align-items:center; justify-content:center; flex-shrink:0;}
+        .letterhead .mark img{width:100%; height:100%; object-fit:cover;}
+        .letterhead h1{font-size:1.1rem; color:#1F2430; font-weight:800;}
+        .letterhead .tagline{font-size:0.72rem; color:#6B7280; margin-top:2px;}
+        .letterhead .meta{text-align:right; font-size:0.72rem; color:#6B7280; font-family:monospace;}
+        h2.report-title{font-size:1rem; color:#1F2430; margin:0 0 4px; font-weight:700;}
+        .report-sub{font-size:0.78rem; color:#6B7280; margin-bottom:14px;}
+        .print-foot{margin-top:24px; font-size:0.72rem; color:#9CA3AF; display:flex; justify-content:space-between; border-top:1px solid #E5E7EB; padding-top:8px;}
+        *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color-adjust:exact !important; }
+        @media print{
+          body{padding:0; margin:0;}
+          @page{size:A4 portrait; margin:12mm 10mm 12mm 10mm;}
+          .no-print, button{display:none !important;}
+          .grid, .kpi, .card{page-break-inside:avoid;}
+        }
+      </style>
+    </head>
+    <body>
+      ${html}
+      <div class="no-print" style="text-align:center; margin-top:24px; padding:16px; background:#FEF3C7; border-radius:8px; font-size:0.9rem;">
+        💡 <b>Simpan sebagai PDF:</b> Klik tombol Cetak (Ctrl+P / ⌘+P) → Pilih <b>"Save as PDF"</b> sebagai printer → pastikan opsi <b>"Background graphics"</b> dicentang agar warna ikut tersimpan → Simpan.
+      </div>
+      <script>
+        window.onload = function(){
+          setTimeout(function(){ window.print(); }, 400);
+        };
+      <\/script>
+    </body></html>
+  `);
+  w.document.close();
+}
+
+/** Unduh Dashboard sebagai JPEG — render off-screen lalu screenshot via html2canvas. */
+function downloadDashboardJpeg(sourceElId, reportTitle, subtitle){
+  const html = buildDashboardPrintHtml(sourceElId, reportTitle, subtitle);
+  if(!html){ showToast('Konten dashboard tidak ditemukan.'); return; }
+  showToast('Memuat library JPEG...');
+  const appCss = _getAppStylesheetText();
+  _loadHtml2Canvas(()=>{
+    const tmp = document.createElement('div');
+    tmp.style.cssText = 'position:fixed;left:-9999px;top:0;width:1100px;background:#fff;padding:28px;';
+    tmp.innerHTML = `<style>${appCss} body{padding:0;}</style>${html}`;
+    document.body.appendChild(tmp);
+    showToast('Membuat JPEG...');
+    setTimeout(()=>{
+      const fullH = tmp.scrollHeight;
+      html2canvas(tmp, {
+        scale: 2, useCORS: true, allowTaint: true,
+        backgroundColor: '#fff',
+        width: 1100, height: fullH,
+        windowWidth: 1100, windowHeight: fullH,
+        scrollX: 0, scrollY: 0, logging: false
+      }).then(canvas=>{
+        document.body.removeChild(tmp);
+        const link = document.createElement('a');
+        link.download = reportTitle.toLowerCase().replace(/[^a-z0-9]+/g,'_') + '_' + todayStr() + '.jpg';
+        link.href = canvas.toDataURL('image/jpeg', 0.95);
+        link.click();
+        showToast('JPEG berhasil diunduh.');
+      }).catch(e=>{ document.body.removeChild(tmp); console.error(e); showToast('Gagal membuat JPEG.'); });
+    }, 500);
+  });
+}
+
+/** Menu unduh khusus Dashboard (PDF/JPEG) — sama pola dengan dlMenuReport() tapi pakai jalur Dashboard yang tidak menyembunyikan kpi/grid. */
+function dlMenuDashboard(sourceElId, reportTitle, subtitle){
+  const key = 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+  _DL_REGISTRY[key] = {
+    pdf:  ()=>downloadDashboardPdf(sourceElId, reportTitle, subtitle),
+    jpeg: ()=>downloadDashboardJpeg(sourceElId, reportTitle, subtitle),
+  };
+  return `<button class="btn btn-secondary dl-btn" style="width:auto;" onclick="event.stopPropagation();_openDlMenu(this,'${key}')">⬇ Unduh <span class="dl-caret">▾</span></button>`;
+}
+
 function downloadReportPdf(sourceElId, reportTitle, subtitle){
   const html = buildReportHtml(sourceElId, reportTitle, subtitle);
   if(!html){ showToast('Konten laporan tidak ditemukan.'); return; }
@@ -7911,8 +8133,8 @@ function renderDashboard(target){
     ${renderMaintenanceAlertBanner()}
     ${renderStokAlarmBanner()}
     <div class="form-actions" style="margin-bottom:14px;">
-      <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printDashboard','Dashboard Ringkasan','Per ${esc(fmtDate(today))}')">🖨 Cetak Dashboard</button>
-      ${dlMenuReport('printDashboard','Dashboard Ringkasan','Per '+fmtDate(today))}
+      <button class="btn btn-secondary" style="width:auto;" onclick="printDashboard('printDashboard','Dashboard Ringkasan','Per ${esc(fmtDate(today))}')">🖨 Cetak Dashboard</button>
+      ${dlMenuDashboard('printDashboard','Dashboard Ringkasan','Per '+fmtDate(today))}
     </div>
     <div id="printDashboard">
 
