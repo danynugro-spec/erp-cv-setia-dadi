@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ERP CV. Setia Dadi</title>
+<meta name="description" content="Sistem Manajemen ERP Penggilingan Padi CV. Setia Dadi">
+<meta name="theme-color" content="#16A34A">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ERP Setia Dadi">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root{
+    --paper:#F5F6F8;
+    --paper-2:#EEF1F4;
+    --ink:#1F2430;
+    --ink-soft:#6B7280;
+    --rice-green:#16A34A;
+    --rice-green-dark:#15803D;
+    --gold:#F59E0B;
+    --gold-soft:#FEF3C7;
+    --red:#DC2626;
+    --line:#E5E7EB;
+    --white:#FFFFFF;
+    font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;
+  }
+  /* ── DARK MODE ──────────────────────────────────────────────
+     Override variabel CSS saat [data-theme="dark"] aktif di <html>.
+     Light mode (default, tanpa atribut) TIDAK berubah sama sekali —
+     seluruh tampilan asli tetap identik untuk user yang tidak
+     mengaktifkan mode gelap. */
+  html[data-theme="dark"]{
+    --paper:#15181F;
+    --paper-2:#1C212B;
+    --ink:#E8EAED;
+    --ink-soft:#9CA3AF;
+    --rice-green:#22C55E;
+    --rice-green-dark:#16A34A;
+    --gold:#FBBF24;
+    --gold-soft:#3A2F12;
+    --red:#F87171;
+    --line:#2D333E;
+    --white:#1C212B;
+  }
+  html[data-theme="dark"] body{ background:var(--paper); color:var(--ink); }
+  html[data-theme="dark"] img:not(.logo-img,.seal img){ filter:brightness(.92) contrast(1.05); }
+  html[data-theme="dark"] .kpi, html[data-theme="dark"] .card, html[data-theme="dark"] table{
+    box-shadow:0 1px 3px rgba(0,0,0,.4);
+  }
+  html[data-theme="dark"] input, html[data-theme="dark"] select, html[data-theme="dark"] textarea{
+    background:var(--paper-2); color:var(--ink); border-color:var(--line);
+  }
+  #darkModeToggle{ width:100%; }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+  .mono{font-family:'JetBrains Mono','SF Mono','Courier New',monospace;}
+
+  /* ============ LOGIN ============ */
+  #loginScreen{
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:var(--paper);
+    padding:20px;
+  }
+  .login-card{
+    background:var(--white);
+    border:1px solid var(--line);
+    border-radius:16px;
+    box-shadow:0 4px 24px rgba(15,23,42,0.06);
+    width:100%;
+    max-width:400px;
+    padding:40px 36px;
+  }
+  .grain-mark{
+    width:64px; height:64px; margin:0 auto 16px;
+    border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    overflow:hidden;
+    border:1px solid var(--line);
+  }
+  .grain-mark img{ width:100%; height:100%; object-fit:cover; }
+  .login-card h1{
+    text-align:center;
+    font-size:1.35rem;
+    font-weight:800;
+    letter-spacing:-0.01em;
+    color:var(--ink);
+    margin-bottom:4px;
+  }
+  .login-card .sub{
+    text-align:center;
+    font-size:0.82rem;
+    color:var(--ink-soft);
+    margin-bottom:28px;
+  }
+  .field{margin-bottom:16px;}
+  .field label{
+    display:block;
+    font-size:0.78rem;
+    font-weight:600;
+    color:var(--ink-soft);
+    margin-bottom:6px;
+  }
+  .field input, .field select{
+    width:100%;
+    padding:11px 14px;
+    border:1px solid var(--line);
+    border-radius:10px;
+    background:var(--white);
+    font-family:inherit;
+    font-size:0.92rem;
+    color:var(--ink);
+    transition:border-color .12s ease, box-shadow .12s ease;
+  }
+  .field input:focus, .field select:focus{
+    outline:none;
+    border-color:var(--rice-green);
+    box-shadow:0 0 0 3px rgba(22,163,74,0.12);
+  }
+  .btn{
+    display:inline-flex; align-items:center; justify-content:center; gap:8px;
+    border:none; border-radius:10px;
+    padding:10px 18px;
+    font-family:inherit;
+    font-size:0.88rem;
+    font-weight:600;
+    cursor:pointer;
+    transition:transform .06s ease, box-shadow .15s ease, background .15s ease, opacity .12s ease;
+  }
+  .btn:active{transform:scale(0.98);}
+  .btn:focus-visible{outline:2px solid var(--rice-green); outline-offset:2px;}
+  .btn-primary{
+    background:var(--rice-green);
+    color:var(--white);
+    width:100%;
+    padding:12px 20px;
+    margin-top:6px;
+    box-shadow:0 1px 2px rgba(0,0,0,0.05);
+  }
+  .btn-primary:hover{background:var(--rice-green-dark);}
+  .login-error{
+    color:var(--red);
+    font-size:0.82rem;
+    margin-top:10px;
+    text-align:center;
+    min-height:1.2em;
+  }
+  .login-hint{
+    margin-top:22px;
+    padding-top:16px;
+    border-top:1px solid var(--line);
+    font-size:0.78rem;
+    color:var(--ink-soft);
+    line-height:1.7;
+  }
+  .login-hint b{color:var(--ink); font-weight:600;}
+
+  /* ============ APP SHELL ============ */
+  #app{display:none; min-height:100vh;}
+  #app.active{display:flex;}
+
+  .sidebar{
+    width:230px;
+    background:var(--white);
+    color:var(--ink);
+    border-right:1px solid var(--line);
+    flex-shrink:0;
+    display:flex; flex-direction:column;
+    position:sticky; top:0; height:100vh;
+    z-index:200;
+  }
+  .sidebar-brand{
+    padding:20px 18px 14px;
+    border-bottom:1px solid var(--line);
+  }
+  .sidebar-brand .mark{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:40px; height:40px; border-radius:10px;
+    border:1px solid var(--line);
+    margin-bottom:8px; overflow:hidden;
+  }
+  .sidebar-brand .mark img{ width:100%; height:100%; object-fit:cover; }
+  .sidebar-brand h2{
+    font-size:0.95rem; font-weight:700; letter-spacing:-0.01em; line-height:1.3; color:var(--ink);
+  }
+  .sidebar-brand .role-tag{
+    display:inline-block; margin-top:8px;
+    font-size:0.65rem; letter-spacing:0.08em; text-transform:uppercase;
+    background:var(--gold-soft); color:#92620A;
+    padding:3px 8px; border-radius:6px; font-weight:700;
+  }
+  .nav-group{padding:10px 10px;}
+  .nav-group-label{
+    font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:0.08em;
+    color:var(--ink-soft);
+    padding:10px 10px 6px;
+  }
+  .nav-item{
+    display:flex; align-items:center; gap:10px;
+    padding:9px 10px;
+    border-radius:8px;
+    color:var(--ink-soft);
+    text-decoration:none;
+    font-size:0.86rem;
+    font-weight:500;
+    cursor:pointer;
+    transition:background .12s ease, color .12s ease;
+  }
+  .nav-item:hover{background:var(--paper-2); color:var(--ink);}
+  .nav-item.active{
+    background:#ECFDF3;
+    color:var(--rice-green-dark);
+    font-weight:600;
+  }
+  .nav-item .num{
+    font-family:'JetBrains Mono','SF Mono','Courier New',monospace;
+    font-size:0.7rem;
+    width:20px; text-align:center;
+    color:var(--ink-soft);
+    opacity:0.6;
+  }
+  .nav-item.active .num{color:var(--rice-green); opacity:1;}
+  .sidebar-foot{
+    margin-top:auto;
+    padding:14px 12px 16px;
+    border-top:1px solid var(--line);
+  }
+  .sidebar-foot button{
+    width:100%;
+  }
+  .btn-ghost{
+    background:transparent;
+    border:1px solid var(--line);
+    color:var(--ink-soft);
+  }
+  .btn-ghost:hover{background:var(--paper-2); color:var(--ink);}
+
+  .main{
+    flex:1; min-width:0;
+    display:flex; flex-direction:column;
+    height:100vh; overflow:hidden;
+  }
+  .topbar{
+    background:var(--white);
+    border-bottom:1px solid var(--line);
+    padding:16px 28px;
+    display:flex; align-items:center; justify-content:space-between;
+    flex-shrink:0;
+  }
+  .topbar h1{
+    font-size:1.2rem; font-weight:700; letter-spacing:-0.01em; color:var(--ink);
+  }
+  .topbar .breadcrumb{
+    font-size:0.72rem; color:var(--ink-soft); font-weight:600; text-transform:uppercase; letter-spacing:0.06em;
+    margin-bottom:2px;
+  }
+  .topbar-right{display:flex; align-items:center; gap:10px;}
+  .topbar-date{
+    font-family:'JetBrains Mono','SF Mono','Courier New',monospace;
+    font-size:0.78rem; color:var(--ink-soft);
+    background:var(--paper-2);
+    padding:7px 12px; border-radius:8px;
+  }
+  .menu-toggle{
+    display:none;
+    width:38px; height:38px;
+    border:1px solid var(--line); border-radius:8px;
+    background:var(--white); color:var(--ink);
+    align-items:center; justify-content:center;
+    font-size:1.2rem; cursor:pointer; flex-shrink:0;
+  }
+  .sidebar-overlay{
+    display:none;
+    position:fixed; inset:0; background:rgba(15,23,42,0.4);
+    z-index:199;
+  }
+  .sidebar-overlay.show{display:block;}
+
+  .content{
+    flex:1; overflow-y:auto;
+    padding:24px 28px 60px;
+  }
+
+  .page{display:none;}
+  .page.active{display:block; animation:fadeIn .25s ease;}
+  @keyframes fadeIn{from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:translateY(0);}}
+
+  /* ============ CARDS / TABLES / SHARED ============ */
+  .card{
+    background:var(--white);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:20px 22px;
+    margin-bottom:20px;
+  }
+  .card h3{
+    font-size:0.98rem; font-weight:700; color:var(--ink);
+    margin-bottom:14px;
+    display:flex; align-items:center; gap:10px;
+  }
+  .card h3 .tag{
+    font-family:'JetBrains Mono','SF Mono','Courier New',monospace;
+    font-size:0.68rem;
+    background:var(--paper-2); color:var(--ink-soft);
+    padding:3px 8px; border-radius:6px; font-weight:600;
+  }
+  .grid{display:grid; gap:16px;}
+  .grid-2{grid-template-columns:repeat(2,1fr);}
+  .grid-3{grid-template-columns:repeat(3,1fr);}
+  .grid-4{grid-template-columns:repeat(4,1fr);}
+  @media (max-width:1000px){
+    .grid-2, .grid-3, .grid-4{grid-template-columns:repeat(2,1fr);}
+  }
+  @media (max-width:760px){
+    .menu-toggle{display:flex;}
+    .sidebar{
+      position:fixed; left:0; top:0; height:100vh;
+      transform:translateX(-100%);
+      transition:transform .22s ease;
+      box-shadow:8px 0 24px rgba(0,0,0,0.2);
+    }
+    .sidebar.open{transform:translateX(0);}
+    .grid-2, .grid-3, .grid-4{grid-template-columns:1fr;}
+    .topbar{padding:12px 14px;}
+    .topbar h1{font-size:1.05rem;}
+    .topbar-date{display:none;}
+    .content{padding:14px 12px 50px;}
+    .card{padding:14px 14px;}
+    .form-row{flex-direction:column; align-items:stretch;}
+    .form-row .field{min-width:0;}
+    .modal{padding:18px 16px; max-width:100%;}
+    table{font-size:0.8rem;}
+    thead th, tbody td{padding:7px 6px;}
+    .doc{padding:18px;}
+    .kpi .value{font-size:1.15rem;}
+
+    /* Mobile card view: hide tabel biasa, tampilkan .m-card */
+    .m-card-wrap .table-wrap { display:none; }
+    .m-card-wrap .m-cards { display:flex; flex-direction:column; gap:10px; margin-top:12px; }
+  }
+  @media (min-width:761px){
+    /* Di layar lebar: sembunyikan card view, tampilkan tabel */
+    .m-card-wrap .m-cards { display:none; }
+    .m-card-wrap .table-wrap { display:block; }
+  }
+
+  /* Mobile transaction card style */
+  .m-card {
+    background:var(--white);
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:14px;
+  }
+  .m-card .m-card-head {
+    display:flex; justify-content:space-between; align-items:flex-start;
+    margin-bottom:10px; gap:8px;
+  }
+  .m-card .m-card-ref {
+    font-family:'JetBrains Mono','SF Mono','Courier New',monospace;
+    font-size:0.78rem; color:var(--ink-soft);
+  }
+  .m-card .m-card-name { font-weight:700; font-size:0.95rem; color:var(--ink); }
+  .m-card .m-card-amount {
+    font-family:'JetBrains Mono','SF Mono','Courier New',monospace;
+    font-weight:700; font-size:1rem; color:var(--ink); white-space:nowrap;
+  }
+  .m-card .m-card-rows { font-size:0.82rem; color:var(--ink-soft); margin-bottom:10px; }
+  .m-card .m-card-rows span { color:var(--ink); font-weight:600; }
+  .m-card .m-card-actions { display:flex; gap:6px; flex-wrap:wrap; }
+
+  .kpi{
+    background:var(--white);
+    border:1px solid var(--line);
+    border-left:3px solid var(--rice-green);
+    border-radius:12px;
+    padding:16px 18px;
+  }
+  .kpi.gold{border-left-color:var(--gold);}
+  .kpi.red{border-left-color:var(--red);}
+  .kpi .label{
+    font-size:0.74rem; font-weight:600;
+    color:var(--ink-soft); margin-bottom:8px;
+  }
+  .kpi .value{
+    font-family:'JetBrains Mono','SF Mono','Courier New',monospace;
+    font-size:1.4rem; font-weight:700; color:var(--ink);
+  }
+  .kpi .value.neg{color:var(--red);}
+  .kpi .sub{font-size:0.74rem; color:var(--ink-soft); margin-top:4px;}
+
+  table{width:100%; border-collapse:collapse; font-size:0.86rem;}
+  thead th{
+    background:var(--paper-2);
+    color:var(--ink-soft);
+    text-align:left; padding:10px 12px;
+    font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;
+    white-space:nowrap;
+  }
+  thead tr:first-child th:first-child{border-radius:8px 0 0 8px;}
+  thead tr:first-child th:last-child{border-radius:0 8px 8px 0;}
+  tbody td{
+    padding:10px 12px;
+    border-bottom:1px solid var(--line);
+    vertical-align:middle;
+  }
+  tbody tr:hover{background:var(--paper-2);}
+  tbody tr.total-row td{
+    font-weight:700; background:var(--gold-soft);
+    border-bottom:none;
+  }
+  .num-cell{font-family:'JetBrains Mono','SF Mono','Courier New',monospace; text-align:right; white-space:nowrap; font-size:0.82rem;}
+  .table-wrap{overflow-x:auto; -webkit-overflow-scrolling:touch;}
+  table{border-collapse:collapse; width:100%; min-width:max-content;}
+  thead th{white-space:nowrap; font-size:0.72rem; padding:8px 10px;}
+  tbody td{padding:8px 10px; font-size:0.85rem;}
+  .table-wrap{overflow-x:auto;}
+
+  /* ============ DOWNLOAD DROPDOWN ============ */
+  .dl-wrap{ position:relative; display:inline-block; }
+  .dl-btn{ display:flex; align-items:center; gap:6px; }
+  .dl-btn .dl-caret{ font-size:0.7rem; opacity:0.7; }
+  .dl-menu{
+    display:none; position:fixed;
+    background:var(--white); border:1px solid var(--line);
+    border-radius:10px; box-shadow:0 6px 20px rgba(15,23,42,0.14);
+    min-width:150px; z-index:600; padding:4px;
+  }
+  .dl-menu.open{ display:block; }
+  .dl-menu button{
+    display:flex; align-items:center; gap:8px;
+    width:100%; text-align:left; background:none; border:none;
+    border-radius:7px; padding:8px 12px; font-family:inherit;
+    font-size:0.88rem; color:var(--ink); cursor:pointer; font-weight:500;
+  }
+  .dl-menu button:hover{ background:var(--paper-2); }
+  .action-sheet-overlay{
+    position:fixed; inset:0; z-index:500;
+    background:transparent;
+  }
+  .action-sheet{
+    position:fixed; z-index:501;
+    background:var(--white);
+    border:1px solid var(--line);
+    border-radius:14px;
+    box-shadow:0 8px 32px rgba(15,23,42,0.18);
+    padding:6px;
+    min-width:180px;
+    animation:asIn .12s ease;
+  }
+  @keyframes asIn{
+    from{opacity:0; transform:scale(0.94) translateY(-4px);}
+    to{opacity:1; transform:scale(1) translateY(0);}
+  }
+  .action-sheet-title{
+    font-size:0.72rem; font-weight:700; text-transform:uppercase;
+    letter-spacing:0.04em; color:var(--ink-soft);
+    padding:6px 10px 4px; border-bottom:1px solid var(--line); margin-bottom:4px;
+  }
+  .action-sheet button{
+    display:flex; align-items:center; gap:8px;
+    width:100%; text-align:left;
+    background:none; border:none; border-radius:8px;
+    padding:9px 12px; font-family:inherit; font-size:0.88rem;
+    color:var(--ink); cursor:pointer; font-weight:500;
+  }
+  .action-sheet button:hover{ background:var(--paper-2); }
+  .action-sheet button.danger{ color:var(--red); }
+  .action-sheet button.danger:hover{ background:#FEE2E2; }
+  .action-sheet hr{ border:none; border-top:1px solid var(--line); margin:4px 0; }
+
+  /* Clickable row style */
+  .tr-clickable{ cursor:pointer; }
+  .tr-clickable:hover{ background:var(--paper-2) !important; }
+  .tr-clickable td:first-child{ border-left:2px solid transparent; }
+  .tr-clickable:hover td:first-child{ border-left-color:var(--rice-green); }
+  .table-sticky-first thead th:first-child,
+  .table-sticky-first tbody td:first-child{
+    position:sticky;
+    left:0;
+    z-index:2;
+    background:var(--white);
+  }
+  .table-sticky-first thead th:first-child{
+    background:var(--paper-2);
+    z-index:3;
+  }
+  /* Subtle shadow to show more content to the right */
+  .table-sticky-first thead th:first-child::after,
+  .table-sticky-first tbody td:first-child::after{
+    content:'';
+    position:absolute;
+    top:0; right:-8px; bottom:0;
+    width:8px;
+    background:linear-gradient(to right, rgba(0,0,0,0.06), transparent);
+    pointer-events:none;
+  }
+  .table-scroll-top{
+    overflow-x:auto; overflow-y:hidden;
+    height:14px; margin-bottom:3px;
+    border-radius:4px;
+    /* style the scrollbar itself */
+    scrollbar-width:thin;
+    scrollbar-color:var(--line) transparent;
+  }
+  .table-scroll-top::-webkit-scrollbar{ height:8px; }
+  .table-scroll-top::-webkit-scrollbar-thumb{ background:var(--line); border-radius:4px; }
+  .table-scroll-top::-webkit-scrollbar-track{ background:transparent; }
+  .table-scroll-top:hover::-webkit-scrollbar-thumb{ background:#CBD5E0; }
+
+  .form-row{display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; margin-bottom:14px;}
+  .form-row .field{flex:1; min-width:140px; margin-bottom:0;}
+  .form-actions{display:flex; gap:10px; margin-top:6px; flex-wrap:wrap;}
+
+  .btn-sm{padding:6px 12px; font-size:0.78rem; border-radius:8px;}
+  .btn-secondary{background:var(--white); color:var(--ink); border:1px solid var(--line);}
+  .btn-secondary:hover{background:var(--paper-2);}
+  .btn-danger{background:transparent; color:var(--red); border:1px solid #FECACA;}
+  .btn-danger:hover{background:var(--red); color:var(--white); border-color:var(--red);}
+
+  .badge{
+    display:inline-block; padding:3px 9px; border-radius:6px;
+    font-size:0.7rem; font-weight:700;
+  }
+  .badge.lunas{background:#DCFCE7; color:#15803D;}
+  .badge.belum{background:#FEE2E2; color:#B91C1C;}
+
+  .empty-state{
+    text-align:center; padding:36px 16px; color:var(--ink-soft);
+    font-size:0.88rem;
+  }
+  .empty-state .stamp{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:46px; height:46px; border-radius:50%;
+    background:var(--paper-2); margin-bottom:10px;
+    font-size:1.3rem;
+  }
+
+  .toast{
+    position:fixed; bottom:24px; right:24px;
+    background:var(--ink); color:var(--white);
+    padding:12px 20px; border-radius:10px;
+    font-size:0.85rem; box-shadow:0 8px 24px rgba(0,0,0,0.18);
+    z-index:999; opacity:0; transform:translateY(10px);
+    transition:opacity .25s, transform .25s;
+    pointer-events:none;
+  }
+  .toast.show{opacity:1; transform:translateY(0);}
+
+  .seal{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:64px; height:64px; border:1px solid var(--line);
+    border-radius:50%; overflow:hidden;
+    flex-shrink:0;
+  }
+  .seal img{ width:100%; height:100%; object-fit:cover; }
+
+  /* ============ MODAL ============ */
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(15,23,42,0.45);
+    display:none; align-items:center; justify-content:center; z-index:1000;
+    padding:20px;
+  }
+  .modal-overlay.show{display:flex;}
+  .modal{
+    background:var(--white); border-radius:16px; max-width:760px; width:100%;
+    max-height:90vh; overflow-y:auto; padding:24px 28px;
+    box-shadow:0 20px 60px rgba(15,23,42,0.2);
+  }
+  .modal h2{color:var(--ink); margin-bottom:4px; font-size:1.1rem; font-weight:700;}
+  .modal .modal-sub{font-size:0.78rem; color:var(--ink-soft); margin-bottom:18px;}
+
+  /* ============ PRINT TEMPLATE ============ */
+  .doc{
+    background:var(--white); border:1px solid var(--line); border-radius:14px;
+    padding:32px; max-width:640px; margin:0 auto;
+  }
+  .doc-head{
+    display:flex; justify-content:space-between; align-items:flex-start;
+    border-bottom:2px solid var(--line); padding-bottom:14px; margin-bottom:18px;
+  }
+  .doc-head h2{color:var(--ink); font-size:1.25rem; font-weight:700;}
+  .doc-head .doc-no{font-family:'JetBrains Mono','SF Mono','Courier New',monospace; color:var(--ink-soft); font-size:0.82rem; margin-top:4px;}
+  .doc table td, .doc table th{border-bottom:1px solid var(--line);}
+  .doc .doc-total-row td{font-weight:700; font-size:1.05rem; border-top:2px solid var(--ink); border-bottom:none;}
+  .doc-foot{margin-top:28px; display:flex; justify-content:space-between; font-size:0.82rem; color:var(--ink-soft);}
+  .doc-foot .sign{text-align:center;}
+  .doc-foot .sign .line{margin-top:48px; border-top:1px solid var(--ink); padding-top:6px;}
+
+  ::-webkit-scrollbar{width:10px; height:10px;}
+  ::-webkit-scrollbar-thumb{background:var(--line); border-radius:5px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+
+  .help-text{font-size:0.78rem; color:var(--ink-soft); margin-top:-8px; margin-bottom:14px;}
+  .section-divider{
+    display:flex; align-items:center; gap:10px; margin:24px 0 14px;
+    font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft);
+  }
+  .section-divider::after{content:""; flex:1; border-top:1px solid var(--line);}
+  select.role-select{cursor:pointer;}
+
+  .perm-locked{opacity:0.5; pointer-events:none; position:relative;}
+  .perm-note{font-size:0.72rem; color:var(--red); margin-top:6px;}
+</style>
+</head>
+<body>
+
+<!-- ================= LOGIN SCREEN ================= -->
+<div id="loginScreen">
+  <div class="login-card">
+    <div class="grain-mark"><img id="loginLogo" alt="Logo CV. Setia Dadi"></div>
+    <h1>CV. Setia Dadi</h1>
+    <div class="sub">Sistem Manajemen Penggilingan Padi</div>
+    <form id="loginForm" onsubmit="return handleLogin(event)">
+      <div class="field">
+        <label for="loginUser">Username</label>
+        <input type="text" id="loginUser" autocomplete="username" placeholder="contoh: owner">
+      </div>
+      <div class="field">
+        <label for="loginPass">Password</label>
+        <input type="password" id="loginPass" autocomplete="current-password" placeholder="••••••••">
+      </div>
+      <button type="submit" class="btn btn-primary">Masuk</button>
+      <div class="login-error" id="loginError"></div>
+    </form>
+    <div class="login-hint">
+      <b>Akun demo:</b><br>
+      Owner &mdash; <span class="mono">owner / owner123</span><br>
+      Admin &mdash; <span class="mono">admin / admin123</span><br>
+      Kasir &mdash; <span class="mono">kasir / kasir123</span><br>
+      <span style="display:block; margin-top:8px;">Kelola akun di menu <b>Manajemen User</b> setelah masuk sebagai Owner.</span>
+    </div>
+    <button class="btn btn-secondary btn-sm" id="installAppBtnLogin" style="display:none; width:100%; margin-top:14px;" onclick="installApp()">📲 Install Aplikasi ke Perangkat</button>
+  </div>
+</div>
+
+<!-- ================= APP SHELL ================= -->
+<div id="app">
+  <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar(false)"></div>
+  <aside class="sidebar" id="sidebarEl">
+    <div class="sidebar-brand">
+      <div class="mark"><img id="sidebarLogo" alt="Logo CV. Setia Dadi"></div>
+      <h2>CV. Setia Dadi<br><span style="font-size:0.7rem; font-weight:400; letter-spacing:0.1em;">Penggilingan Padi</span></h2>
+      <span class="role-tag" id="roleTag">OWNER</span>
+    </div>
+
+    <nav style="flex:1; overflow-y:auto;">
+      <div class="nav-group">
+        <div class="nav-group-label">Ringkasan</div>
+        <div class="nav-item" data-page="dashboard"><span class="num">01</span> Dashboard</div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Transaksi</div>
+        <div class="nav-item" data-page="pembelian"><span class="num">02</span> Form Pembelian</div>
+        <div class="nav-item" data-page="produksi"><span class="num">03</span> Form Produksi</div>
+        <div class="nav-item" data-page="penjualan"><span class="num">04</span> Form Penjualan</div>
+        <div class="nav-item" data-page="maklon"><span class="num">04b</span> Form Maklon</div>
+        <div class="nav-item" data-page="gudang"><span class="num">05</span> Gudang &amp; Stok</div>
+        <div class="nav-item" data-page="stockopname"><span class="num">05a</span> Stock Opname</div>
+        <div class="nav-item" data-page="lottracking"><span class="num">05b</span> Lot / Batch Tracking</div>
+        <div class="nav-item" data-page="kartustok"><span class="num">05c</span> Kartu Stok</div>
+        <div class="nav-item" data-page="stokminimum"><span class="num">05d</span> Stok Minimum &amp; Alarm</div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Dokumen Otomatis</div>
+        <div class="nav-item" data-page="dokumenhub"><span class="num">DH</span> 📑 Pusat Dokumen (PDF+QR)</div>
+        <div class="nav-item" data-page="purchaseorder"><span class="num">PO</span> 📝 Purchase Order</div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Sistem</div>
+        <div class="nav-item" data-page="backupenterprise"><span class="num">BK</span> 🛡️ Backup Enterprise</div>
+        <div class="nav-item" data-page="audittrail"><span class="num">AT</span> 🕵️ Audit Trail</div>
+        <div class="nav-item" data-page="bahanpendukung"><span class="num">06</span> Bahan Pendukung</div>
+        <div class="nav-item" data-page="distribusi"><span class="num">07</span> Distribusi &amp; Pengiriman</div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Keuangan</div>
+        <div class="nav-item" data-page="kasbank"><span class="num">08</span> Kas &amp; Bank</div>
+        <div class="nav-item" data-page="hutangpiutang"><span class="num">09</span> Hutang &amp; Piutang</div>
+        <div class="nav-item" data-page="labarugi"><span class="num">10</span> Laba Rugi</div>
+        <div class="nav-item" data-page="neraca"><span class="num">11</span> Neraca</div>
+        <div class="nav-item" data-page="laporan"><span class="num">12</span> Laporan Lengkap</div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Akuntansi (Double-Entry)</div>
+        <div class="nav-item" data-page="jurnalumum"><span class="num">A1</span> Jurnal Umum</div>
+        <div class="nav-item" data-page="neracasaldo"><span class="num">A2</span> Neraca Saldo</div>
+        <div class="nav-item" data-page="bukubesar"><span class="num">A3</span> Buku Besar</div>
+        <div class="nav-item" data-page="labarugi2"><span class="num">A4</span> Laba Rugi (Jurnal)</div>
+        <div class="nav-item" data-page="neraca2"><span class="num">A5</span> Neraca (Jurnal)</div>
+        <div class="nav-item" data-page="aruskas"><span class="num">A6</span> Arus Kas (Jurnal)</div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Business Intelligence</div>
+        <div class="nav-item" data-page="bi"><span class="num">BI</span> 🧠 BI Dashboard</div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Operasional</div>
+        <div class="nav-item" data-page="maintenance"><span class="num">MT</span> 🔧 Maintenance Mesin</div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Data Master</div>
+        <div class="nav-item" data-page="supplier"><span class="num">13</span> Master Supplier</div>
+        <div class="nav-item" data-page="pelanggan"><span class="num">14</span> Master Pelanggan</div>
+        <div class="nav-item" data-page="jenisgabah"><span class="num">15</span> Master Jenis Gabah</div>
+        <div class="nav-item" data-page="jenisberas"><span class="num">16</span> Master Jenis Beras</div>
+        <div class="nav-item" data-page="jenissamping"><span class="num">17</span> Master Produk Samping</div>
+        <div class="nav-item" data-page="jenisbahanbaku"><span class="num">18</span> Master Bahan Baku</div>
+        <div class="nav-item" data-page="kendaraan"><span class="num">19</span> Master Kendaraan</div>
+      </div>
+      <div class="nav-group" id="navUserMgmt">
+        <div class="nav-group-label">Administrasi</div>
+        <div class="nav-item" data-page="usermgmt"><span class="num">20</span> Manajemen User</div>
+      </div>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div style="font-size:0.78rem; margin-bottom:10px;" id="userInfo"></div>
+      <button class="btn btn-ghost btn-sm" id="darkModeToggle" onclick="toggleDarkMode()">🌙 Mode Gelap</button>
+      <button class="btn btn-ghost btn-sm" id="installAppBtn" style="display:none; border-color:var(--gold); color:var(--gold); margin-top:8px;" onclick="installApp()">📲 Install App</button>
+      <button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="exportData()">⬇ Ekspor Data (.json)</button>
+      <button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="document.getElementById('importFile').click()">⬆ Impor Data</button>
+      <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(event)">
+      <button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="logout()">Keluar</button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <button class="menu-toggle" onclick="toggleSidebar()" aria-label="Menu">☰</button>
+        <div>
+          <div class="breadcrumb" id="topBreadcrumb">Ringkasan</div>
+          <h1 id="topTitle">Dashboard</h1>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <div class="topbar-date mono" id="topDate"></div>
+      </div>
+    </div>
+    <div class="content" id="content">
+      <!-- Pages injected here -->
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="action-sheet-overlay" id="asOverlay" style="display:none;" onclick="closeActionSheet()"></div>
+<div class="action-sheet" id="actionSheet" style="display:none;"></div>
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal" id="modalBody"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
