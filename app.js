@@ -2271,6 +2271,20 @@ function _loadHtml2Canvas(callback){
 }
 
 // Download element as JPEG — full height, not clipped to viewport
+// BUG-004 FIX: windowWidth SEBELUMNYA dipaksa minimal 800px
+// (Math.max(el.scrollWidth+40, 800)) sementara width (area crop hasil akhir)
+// tetap el.scrollWidth murni. html2canvas memakai windowWidth/windowHeight
+// sebagai ukuran VIEWPORT VIRTUAL untuk menghitung layout (termasuk
+// media-query/flex/grid responsif) SEBELUM hasilnya di-crop ke width/height.
+// Untuk dokumen yang lebih sempit dari 800px (mis. Kuitansi ~638px), elemen
+// di-layout ULANG seolah viewport-nya 800px (berpotensi melebar mengisi
+// ruang ekstra), lalu HASIL YANG SUDAH MELEBAR ITU dipotong kembali ke
+// el.scrollWidth — sehingga bagian yang melebar akibat viewport virtual
+// yang salah justru terpotong dari gambar akhir. windowWidth/windowHeight
+// disamakan persis dengan width/height (scrollWidth/scrollHeight asli) agar
+// elemen di-layout dengan ukuran yang SAMA dengan area yang di-crop —
+// tidak ada lagi mismatch antara "ukuran saat di-render" dan "ukuran saat
+// dipotong".
 function downloadJpegFromEl(elId, filename){
   const el = document.getElementById(elId);
   if(!el){ showToast('Konten tidak ditemukan.'); return; }
@@ -2281,8 +2295,7 @@ function downloadJpegFromEl(elId, filename){
       scale: 2, useCORS: true, allowTaint: true,
       backgroundColor: '#FFFDF8',
       width: el.scrollWidth, height: el.scrollHeight,
-      windowWidth: Math.max(el.scrollWidth + 40, 800),
-      windowHeight: el.scrollHeight,
+      windowWidth: el.scrollWidth, windowHeight: el.scrollHeight,
       x: 0, y: 0, scrollX: 0, scrollY: 0, logging: false
     }).then(canvas=>{
       const link = document.createElement('a');
@@ -2295,23 +2308,47 @@ function downloadJpegFromEl(elId, filename){
 }
 
 // JPEG untuk laporan — render ke div tersembunyi dengan full height
+// BUG-004 FIX: SEBELUMNYA tmp div dipaksa width:900px tetap (hardcoded di CSS
+// DAN di opsi html2canvas). Untuk laporan dengan tabel berkolom banyak (mis.
+// Laporan Pembelian, scrollWidth tabel ~1108-1242px tergantung jumlah kolom),
+// lebar 900px memotong konten secara horizontal — tabel tidak diberi ruang
+// cukup untuk melebar, sehingga kolom-kolom di sisi kanan terpotong dari hasil
+// JPEG. Diperbaiki dengan strategi 2-tahap:
+//   1. Attach tmp dengan width:max-content (auto-size mengikuti konten
+//      terlebar, termasuk tabel yang butuh ruang lebih dari perkiraan awal),
+//      lalu BATASI dengan min-width agar laporan singkat tetap terlihat rapi
+//      (tidak terlalu sempit).
+//   2. SETELAH ter-attach ke DOM (sehingga browser sudah menghitung layout
+//      sesungguhnya), baca scrollWidth & scrollHeight AKTUAL — ini dipakai
+//      sebagai width/height ke html2canvas, BUKAN angka tetap yang ditebak.
+// Strategi ini sama persis dengan pola yang sudah benar di downloadJpegFromEl()
+// (Kuitansi/Invoice/dst), yang langsung memakai el.scrollWidth/scrollHeight
+// dari elemen modal asli tanpa lebar tetap.
 function downloadJpegReport(sourceElId, reportTitle, subtitle){
   const html = buildReportHtml(sourceElId, reportTitle, subtitle);
   if(!html){ showToast('Konten tidak ditemukan.'); return; }
   showToast('Memuat library JPEG...');
   _loadHtml2Canvas(()=>{
     const tmp = document.createElement('div');
-    tmp.style.cssText = 'position:fixed;left:-9999px;top:0;width:900px;background:#fff;padding:28px;font-family:Inter,sans-serif;font-size:13px;line-height:1.5;';
+    // width:max-content membiarkan div melebar mengikuti konten terlebar
+    // (mis. tabel dengan banyak kolom), dibatasi min-width agar laporan
+    // pendek/sempit tetap proporsional, dan max-width sebagai pengaman agar
+    // tidak melebar tak terbatas pada kasus ekstrem (mis. tabel ratusan kolom).
+    tmp.style.cssText = 'position:fixed;left:-9999px;top:0;width:max-content;min-width:900px;max-width:2400px;background:#fff;padding:28px;font-family:Inter,sans-serif;font-size:13px;line-height:1.5;';
     tmp.innerHTML = `<style>${REPORT_STYLES} body{padding:0;}</style>${html}`;
     document.body.appendChild(tmp);
     showToast('Membuat JPEG...');
     setTimeout(()=>{
+      // Diukur SETELAH attach ke DOM — scrollWidth/scrollHeight di sini adalah
+      // ukuran AKTUAL konten (termasuk tabel yang sudah selesai layout-nya),
+      // bukan angka yang ditebak di awal.
+      const fullW = tmp.scrollWidth;
       const fullH = tmp.scrollHeight;
       html2canvas(tmp, {
         scale: 2, useCORS: true, allowTaint: true,
         backgroundColor: '#fff',
-        width: 900, height: fullH,
-        windowWidth: 900, windowHeight: fullH,
+        width: fullW, height: fullH,
+        windowWidth: fullW, windowHeight: fullH,
         scrollX: 0, scrollY: 0, logging: false
       }).then(canvas=>{
         document.body.removeChild(tmp);
@@ -2689,6 +2726,13 @@ function downloadDashboardPdf(sourceElId, reportTitle, subtitle){
 }
 
 /** Unduh Dashboard sebagai JPEG — render off-screen lalu screenshot via html2canvas. */
+// BUG-004 FIX: width:1100px (tetap) diubah jadi width:max-content dengan
+// min-width:1100px — Dashboard saat ini memang dirancang untuk lebar 1100px
+// (CSS grid KPI cards), tapi mengunci lebar secara tetap berisiko memotong
+// konten diam-diam jika suatu saat ada chart/tabel yang butuh ruang lebih
+// lebar dari itu. Strategi sama dengan downloadJpegReport(): ukur
+// scrollWidth/scrollHeight AKTUAL setelah elemen ter-attach ke DOM, bukan
+// menebak angka di awal.
 function downloadDashboardJpeg(sourceElId, reportTitle, subtitle){
   const html = buildDashboardPrintHtml(sourceElId, reportTitle, subtitle);
   if(!html){ showToast('Konten dashboard tidak ditemukan.'); return; }
@@ -2696,17 +2740,18 @@ function downloadDashboardJpeg(sourceElId, reportTitle, subtitle){
   const appCss = _getAppStylesheetText();
   _loadHtml2Canvas(()=>{
     const tmp = document.createElement('div');
-    tmp.style.cssText = 'position:fixed;left:-9999px;top:0;width:1100px;background:#fff;padding:28px;';
+    tmp.style.cssText = 'position:fixed;left:-9999px;top:0;width:max-content;min-width:1100px;max-width:2400px;background:#fff;padding:28px;';
     tmp.innerHTML = `<style>${appCss} body{padding:0;}</style>${html}`;
     document.body.appendChild(tmp);
     showToast('Membuat JPEG...');
     setTimeout(()=>{
+      const fullW = tmp.scrollWidth;
       const fullH = tmp.scrollHeight;
       html2canvas(tmp, {
         scale: 2, useCORS: true, allowTaint: true,
         backgroundColor: '#fff',
-        width: 1100, height: fullH,
-        windowWidth: 1100, windowHeight: fullH,
+        width: fullW, height: fullH,
+        windowWidth: fullW, windowHeight: fullH,
         scrollX: 0, scrollY: 0, logging: false
       }).then(canvas=>{
         document.body.removeChild(tmp);
@@ -6875,15 +6920,23 @@ function getTotalPiutang(){
 //         (2) entry kasbank 'DP Pembelian' yang refId === pembelian.id (dibuat otomatis saat save pembelian)
 // Tidak lagi menggunakan r.dp langsung untuk menghindari double-count jika r.dp
 // pernah dimutasi oleh versi kode sebelumnya.
+// BUG-003 FIX: kategori 'Uang Muka Dipakai' (uang muka lama otomatis dipakai sbg
+// pembayaran faktur baru — lihat savePembelian()) SEBELUMNYA tidak dihitung di sini
+// sama sekali, sehingga faktur yang sebagian dibayar dari uang muka tampak masih
+// berhutang penuh. Field k.masuk dipakai (bukan k.keluar) karena entri ini dicatat
+// sebagai kas MASUK secara internal (uang muka "mengalir masuk" sebagai pelunasan).
 function getTotalBayarPembelian(r){
   const viaKasbank = DB.kasbank
     .filter(k=>(k.kategori==='Pelunasan Hutang Supplier' || k.kategori==='DP Pembelian') && k.refId===r.id)
     .reduce((s,k)=>s+Number(k.keluar||0), 0);
+  const uangMukaDipakai = DB.kasbank
+    .filter(k=>k.kategori==='Uang Muka Dipakai' && k.refId===r.id)
+    .reduce((s,k)=>s+Number(k.masuk||0), 0);
   const dpKasbank = DB.kasbank
     .filter(k=>k.kategori==='DP Pembelian' && k.refId===r.id)
     .reduce((s,k)=>s+Number(k.keluar||0), 0);
   const legacyDp = dpKasbank === 0 ? Number(r.dp||0) : 0;
-  const totalBayar = viaKasbank + legacyDp;
+  const totalBayar = viaKasbank + uangMukaDipakai + legacyDp;
   if(r.status === 'Lunas' && totalBayar === 0){
     return Number(r.total||0);
   }
@@ -6905,14 +6958,123 @@ function getHutangPembelian(r){
   return Math.max(0, Number(r.total||0) - totalBayar);
 }
 
-// Hutang bersih per supplier = net semua faktur (kelebihan satu faktur menutup hutang faktur lain)
-// + kurangi uang muka global yang tersedia
+/* ============================================================
+   BUG-003 FIX (KRITIS) — SATU SUMBER KEBENARAN UNTUK SALDO HUTANG
+   ============================================================
+   Audit menemukan 3 mesin perhitungan hutang berbeda yang menghasilkan
+   angka berbeda untuk skenario yang sama:
+     1. getHutangBersihSupplier() (lama) — net per-faktur + kurangi uang
+        muka GLOBAL (termasuk uang muka yang sudah/belum dipakai, double-
+        count terhadap getTotalBayarPembelian yang sekarang sudah
+        menghitung 'Uang Muka Dipakai' sebagai pembayaran sah).
+     2. getRekapHutangSupplier() — implementasi terpisah, logika sama
+        dengan #1 tapi ditulis ulang (duplikasi kode, bukan dipanggil
+        dari #1).
+     3. _buildKartuEvents() (Kartu Supplier) — TIDAK memanggil #1 atau #2
+        sama sekali; menghitung ulang dari nol dengan model "debit/dp/
+        lunas" yang keliru memperlakukan kategori 'Uang Muka Dipakai'
+        sebagai TAMBAHAN hutang (debit), bukan pengurang — kebalikan dari
+        makna sebenarnya.
+
+   Akibatnya: untuk supplier yang pernah memakai uang muka sebagai
+   pembayaran faktur baru, ketiga modul (Hutang Supplier, Kartu Supplier,
+   Dashboard, Laporan) bisa menampilkan TIGA angka saldo yang berbeda.
+
+   Perbaikan: SATU fungsi pusat, calculateOutstandingDebt(supplierNama),
+   menerapkan rumus yang diminta secara harfiah:
+
+       Saldo Hutang = Total Pembelian − DP − Seluruh Pelunasan
+
+   "Seluruh Pelunasan" mencakup SEMUA kategori kasbank yang secara
+   substansi mengurangi hutang CV ke supplier tsb:
+     - DP Pembelian             (bayar di muka saat input faktur)
+     - Pelunasan Hutang Supplier(bayar pelunasan setelahnya)
+     - Uang Muka Dipakai        (uang muka lama dipakai utk faktur baru —
+                                  efeknya identik dengan pembayaran)
+     - Piutang ke Supplier      (kelebihan bayar yang akan dikembalikan —
+                                  CV sudah membayar lebih dari nilai faktur)
+
+   'Uang Muka Supplier' (kelebihan yang JADI uang muka tapi BELUM dipakai)
+   SENGAJA TIDAK dikurangkan di sini — itu adalah kredit/aset CV yang
+   tersedia di sisi supplier, bukan pelunasan faktur manapun secara
+   langsung. Ia baru menjadi pengurang saldo hutang pada saat benar-benar
+   dipakai (yaitu ketika transaksi 'Uang Muka Dipakai' tercipta).
+   Mengurangkan keduanya sekaligus adalah double-counting — persis bug
+   yang ditemukan di getHutangBersihSupplier() versi lama.
+
+   SELURUH modul (renderHutangPiutang, Kartu Supplier, Dashboard, Laporan
+   Hutang, Buku Besar) WAJIB mengambil saldo dari fungsi ini — tidak ada
+   lagi perhitungan terpisah.
+   ============================================================ */
+function calculateOutstandingDebt(supplierNama){
+  const pembelianSupplier = DB.pembelian.filter(r => r.supplier === supplierNama);
+
+  const totalPembelian = pembelianSupplier.reduce((s, r) => s + Number(r.total || 0), 0);
+
+  // "Seluruh Pelunasan" — termasuk DP, sesuai rumus literal user (Total Pembelian − DP − Pelunasan).
+  //
+  // Dihitung per-faktur via getTotalBayarPembelian(r), BUKAN ditulis ulang dari nol —
+  // fungsi tsb sudah punya fallback teruji untuk kasus "status Lunas tapi tidak ada
+  // entri kasbank apa pun" (terjadi pada sebagian data lama/seed, mis. seed-pb-1, yang
+  // dibuat sebelum savePembelian() konsisten menciptakan entri 'DP Pembelian' otomatis
+  // saat status di-set Lunas). Tanpa fallback ini, faktur semacam itu akan salah
+  // dilaporkan sebagai hutang penuh padahal sudah lunas — bug yang sempat lolos saat
+  // fungsi ini pertama ditulis terpisah, terdeteksi lewat verifikasi aljabar sebelum
+  // sempat dipakai modul manapun.
+  //
+  // getTotalBayarPembelian(r) SUDAH mencakup kas fisik yang benar-benar keluar
+  // (Pelunasan Hutang Supplier + DP Pembelian + Uang Muka Dipakai), termasuk
+  // pembayaran yang OVERPAY pada faktur tersebut (mis. dibayar 5.3jt utk faktur
+  // 5jt — totalBayar tetap mencatat 5.3jt yang sungguh dibayarkan).
+  const totalSeluruhPelunasanFaktur = pembelianSupplier
+    .reduce((s, r) => s + getTotalBayarPembelian(r), 0);
+
+  // Breakdown DP saja (untuk transparansi tampilan) — komponen dari total di atas.
+  let totalDP = 0;
+  pembelianSupplier.forEach(r => {
+    const dpKasbank = DB.kasbank
+      .filter(k => k.kategori === 'DP Pembelian' && k.refId === r.id)
+      .reduce((s, k) => s + Number(k.keluar || 0), 0);
+    const legacyDp = dpKasbank === 0 ? Number(r.dp || 0) : 0;
+    totalDP += dpKasbank + legacyDp;
+  });
+
+  // CATATAN PENTING (koreksi dari versi sebelumnya — ditemukan lewat verifikasi
+  // aljabar sebelum dipakai modul manapun):
+  // 'Piutang ke Supplier' BUKAN transaksi kas tambahan yang mengurangi saldo —
+  // ia hanyalah METADATA/keterangan atas sebagian dari kas yang SUDAH tercatat
+  // di 'Pelunasan Hutang Supplier' (yang sudah ikut terhitung di
+  // totalSeluruhPelunasanFaktur di atas), menandakan bahwa sebagian dari
+  // pembayaran itu adalah kelebihan yang akan dikembalikan TUNAI oleh supplier.
+  // Mengurangkannya LAGI dari total pembelian adalah double-counting: kas yang
+  // sama (kelebihan bayar) akan terhitung dua kali sebagai pengurang hutang.
+  // Nilai ini tetap dihitung & dikembalikan untuk keperluan TAMPILAN/INFORMASI
+  // (mis. "Piutang ke Supplier: Rp xxx, menunggu pengembalian"), TAPI TIDAK
+  // dipakai dalam rumus saldoHutang.
+  const totalPiutangKeSupplier = DB.kasbank
+    .filter(k => k.kategori === 'Piutang ke Supplier' && k.refSupplier === supplierNama)
+    .reduce((s, k) => s + Number(k.masuk || 0), 0);
+
+  const totalPelunasanLain = Math.max(0, totalSeluruhPelunasanFaktur - totalDP);
+  const totalSeluruhPelunasan = totalSeluruhPelunasanFaktur; // TIDAK termasuk totalPiutangKeSupplier (lihat catatan di atas)
+  const saldoHutang = Math.max(0, totalPembelian - totalSeluruhPelunasan);
+
+  return {
+    supplier: supplierNama,
+    totalPembelian,
+    totalDP,
+    totalPelunasanLain,
+    totalPiutangKeSupplier, // info terpisah, bukan komponen pengurang saldoHutang
+    totalSeluruhPelunasan,
+    saldoHutang,
+  };
+}
+
+// Alias — dipertahankan agar seluruh titik pemanggilan existing
+// (renderHutangPiutang, laporan, dll) tetap valid tanpa perlu diubah satu-satu.
+// Mengembalikan angka saldo saja (kompatibel dengan signature lama).
 function getHutangBersihSupplier(supplierNama){
-  const netFaktur = DB.pembelian
-    .filter(r=>r.supplier===supplierNama)
-    .reduce((s,r)=>s+getSisaHutangFaktur(r), 0);
-  const uangMuka = (getUangMukaPerSupplier())[supplierNama]||0;
-  return Math.max(0, netFaktur - uangMuka);
+  return calculateOutstandingDebt(supplierNama).saldoHutang;
 }
 
 function getTotalHutangUsaha(){
@@ -6922,22 +7084,25 @@ function getTotalHutangUsaha(){
 }
 
 // Rekap hutang per supplier — hanya tampilkan supplier yang masih punya sisa hutang
+// BUG-003 FIX: sebelumnya fungsi ini punya implementasi perhitungan SENDIRI
+// (duplikasi dari getHutangBersihSupplier, dengan bug yang sama: mengurangi
+// uang muka global yang sudah/belum dipakai sekaligus, double-counting).
+// Sekarang murni memanggil calculateOutstandingDebt() — satu sumber kebenaran.
 function getRekapHutangSupplier(){
-  const map = {};
-  DB.pembelian.forEach(r=>{
-    if(!map[r.supplier]) map[r.supplier] = {supplier:r.supplier, totalNilai:0, totalHutang:0, jumlahTransaksi:0};
-    map[r.supplier].totalNilai += Number(r.total||0);
-    map[r.supplier].totalHutang += getSisaHutangFaktur(r); // net per faktur, bisa negatif
-    map[r.supplier].jumlahTransaksi += 1;
-  });
-  // Kurangi uang muka yang tersedia per supplier
-  const uangMuka = getUangMukaPerSupplier();
-  Object.entries(uangMuka).forEach(([sup, sisa])=>{
-    if(map[sup]) map[sup].totalHutang -= sisa;
-  });
-  return Object.values(map)
-    .filter(x=>Math.abs(x.totalHutang) > 0.01)
-    .sort((a,b)=>b.totalHutang-a.totalHutang);
+  const suppliers = [...new Set(DB.pembelian.map(r => r.supplier))];
+  return suppliers
+    .map(sup => {
+      const d = calculateOutstandingDebt(sup);
+      const jumlahTransaksi = DB.pembelian.filter(r => r.supplier === sup).length;
+      return {
+        supplier: sup,
+        totalNilai: d.totalPembelian,
+        totalHutang: d.saldoHutang,
+        jumlahTransaksi,
+      };
+    })
+    .filter(x => x.totalHutang > 0.01)
+    .sort((a, b) => b.totalHutang - a.totalHutang);
 }
 // Rekap piutang per customer — hanya tampilkan yang masih punya sisa piutang
 function getRekapPiutangCustomer(){
@@ -7165,11 +7330,20 @@ function renderHutangPiutang(target){
    Generates a printable statement of outstanding balance for a
    single supplier or customer, suitable for sending to them.
    ============================================================ */
+// BUG-003 FIX: TOTAL pada laporan ini SEBELUMNYA dijumlah dari getHutangPembelian(r)
+// per-faktur (masing-masing di-clamp ke 0 secara individual). Untuk supplier dengan
+// kompensasi lintas-faktur (mis. faktur A overpay, faktur B masih ada sisa — kelebihan
+// di A seharusnya menutup sebagian sisa di B), penjumlahan per-faktur yang sudah
+// di-clamp TIDAK BISA menangkap kompensasi ini, sehingga totalnya lebih besar dari
+// saldo hutang sesungguhnya. TOTAL sekarang WAJIB diambil dari calculateOutstandingDebt()
+// — satu sumber kebenaran yang sama dipakai Hutang Supplier, Kartu Supplier, dan Dashboard.
+// Baris RINCIAN per-faktur tetap ditampilkan apa adanya (untuk transparansi rincian
+// transaksi), hanya baris TOTAL yang diperbaiki.
 function buildLaporanHutangSupplierHtml(supplierName){
   const supplier = DB.suppliers.find(s=>s.nama===supplierName);
   const transaksi = DB.pembelian.filter(r=>r.supplier===supplierName && getHutangPembelian(r)>0)
     .slice().sort((a,b)=>a.tanggal.localeCompare(b.tanggal));
-  const totalHutang = transaksi.reduce((s,r)=>s+getHutangPembelian(r),0);
+  const totalHutang = calculateOutstandingDebt(supplierName).saldoHutang;
 
   const rows = transaksi.map(r=>{
     const kategori = r.kategori || 'Gabah';
@@ -7234,6 +7408,29 @@ function downloadLaporanHutangSupplierPdf(supplierName){
           Tagihan | DP | Pelunasan | Saldo Hutang
    ============================================================ */
 
+// BUG-003 FIX (KRITIS): fungsi ini sebelumnya menghasilkan saldoAkhir yang
+// BERBEDA dari calculateOutstandingDebt() untuk supplier yang pernah memakai
+// uang muka. Dua kesalahan struktural diperbaiki:
+//   1. Kategori 'Uang Muka Dipakai' SEBELUMNYA dicatat sebagai field `debit`
+//      (menambah saldo / terlihat seperti hutang baru) — padahal artinya
+//      uang muka lama dipakai untuk MELUNASI faktur baru, seharusnya
+//      `lunas` (mengurangi saldo), persis simetris dengan 'Pelunasan Hutang
+//      Supplier'.
+//   2. Kategori 'Uang Muka Supplier' (kelebihan yang JADI uang muka, belum
+//      dipakai) SEBELUMNYA ikut mengurangi saldo (field `dp`) — padahal itu
+//      adalah kredit/aset CV yang belum dipakai untuk faktur manapun, bukan
+//      pelunasan. Baris event ini dihapus dari kartu hutang (ditampilkan
+//      terpisah di tempat lain sebagai info "Uang Muka Tersedia", bukan
+//      pengurang saldo hutang per faktur).
+//   3. Kategori 'Piutang ke Supplier' (kelebihan bayar yang akan
+//      dikembalikan tunai oleh supplier) DITAMBAHKAN — sebelumnya sama
+//      sekali tidak muncul di kartu, padahal secara substansi CV sudah
+//      membayar lebih dari nilai faktur dan ini harus mengurangi saldo,
+//      sama seperti pelunasan.
+// Dengan perbaikan ini, saldoAkhir = totDebit - totDP - totLunas akan SELALU
+// identik dengan calculateOutstandingDebt(supplierNama).saldoHutang, karena
+// kedua fungsi kini menjumlahkan komponen yang persis sama (hanya cara
+// penyajian — agregat vs kronologis per-event — yang berbeda).
 function _buildKartuEvents(supplierNama){
   const events = [];
 
@@ -7275,15 +7472,31 @@ function _buildKartuEvents(supplierNama){
       ket:k.keterangan||`Pelunasan (${p.noFaktur})`, debit:0, dp:0, lunas:Number(k.keluar||0)});
   });
 
-  DB.kasbank.filter(k=>k.kategori==='Uang Muka Supplier'&&k.refSupplier===supplierNama).forEach(k=>{
-    events.push({tgl:'2dp', tgl_raw:k.tanggal, ref:'-', tipe:'uangmuka',
-      ket:k.keterangan||'Kelebihan bayar → Uang Muka', debit:0, dp:Number(k.keluar||0), lunas:0});
+  // BUG-003 FIX: dipindah dari field `debit` ke `lunas` — uang muka dipakai
+  // berarti MENGURANGI saldo hutang faktur terkait, bukan menambah.
+  DB.kasbank.filter(k=>k.kategori==='Uang Muka Dipakai'&&k.refSupplier===supplierNama).forEach(k=>{
+    const p = DB.pembelian.find(r=>r.id===k.refId);
+    events.push({tgl:'3pel', tgl_raw:k.tanggal, ref:p?p.noFaktur:'-', tipe:'uangmukapakai',
+      ket:k.keterangan||'Uang muka dipakai sebagai pelunasan', debit:0, dp:0, lunas:Number(k.masuk||0)});
   });
 
-  DB.kasbank.filter(k=>k.kategori==='Uang Muka Dipakai'&&k.refSupplier===supplierNama).forEach(k=>{
-    events.push({tgl:'1pemb', tgl_raw:k.tanggal, ref:'-', tipe:'uangmukapakai',
-      ket:k.keterangan||'Uang muka dipakai sebagai DP', debit:Number(k.masuk||0), dp:0, lunas:0});
-  });
+  // KOREKSI (ditemukan lewat verifikasi aljabar sebelum dipakai modul manapun):
+  // Event 'Piutang ke Supplier' SEBELUMNYA ditambahkan di sini sebagai pengurang
+  // `lunas` tambahan. Ini SALAH — 'Piutang ke Supplier' bukan transaksi kas baru,
+  // melainkan METADATA atas sebagian kas yang SUDAH tercatat di event 'pelunasan'
+  // (kategori 'Pelunasan Hutang Supplier') di atas. Menambahkannya sebagai event
+  // terpisah berarti kelebihan bayar yang sama dihitung dua kali sebagai pengurang
+  // saldo — persis double-counting yang juga ditemukan & diperbaiki di
+  // calculateOutstandingDebt(). Baris event ini DIHAPUS. Informasi "Piutang ke
+  // Supplier" tetap tersedia terpisah lewat kasbank kategori tsb untuk keperluan
+  // tampilan, tidak dicampur ke perhitungan saldo berjalan kartu.
+
+  // BUG-003 FIX: event 'Uang Muka Supplier' (kelebihan yang JADI uang muka,
+  // BELUM dipakai) DIHAPUS dari kartu hutang — itu kredit/aset CV yang belum
+  // dipakai untuk faktur manapun, bukan pelunasan. Tetap dihitung & ditampilkan
+  // terpisah sebagai "Uang Muka Tersedia" lewat getUangMukaPerSupplier(), tidak
+  // dicampur ke saldo hutang per faktur (mencegah double-count saat dipakai
+  // nanti, ketika baru menjadi event 'Uang Muka Dipakai' di atas).
 
   events.sort((a,b) => a.tgl_raw.localeCompare(b.tgl_raw) || a.tgl.localeCompare(b.tgl));
 
@@ -7293,7 +7506,8 @@ function _buildKartuEvents(supplierNama){
   const totDebit = events.reduce((s,e)=>s+e.debit, 0);
   const totDP    = events.reduce((s,e)=>s+e.dp,    0);
   const totLunas = events.reduce((s,e)=>s+e.lunas,  0);
-  return { events, totDebit, totDP, totLunas, saldoAkhir: totDebit - totDP - totLunas };
+  const saldoAkhir = Math.max(0, totDebit - totDP - totLunas);
+  return { events, totDebit, totDP, totLunas, saldoAkhir };
 }
 
 function buildKartuSupplierHtml(supplierNama){
@@ -9009,9 +9223,18 @@ function rebuildSemuaJurnal(){
   // memilih postPembelianTunai() untuk status==='Lunas', sehingga kasus kedua di atas
   // menghasilkan akun Hutang Usaha (2101) minus permanen — riwayat pelunasan terhitung
   // dua kali (sekali implisit dari postPembelianTunai, sekali eksplisit dari postBayarHutang).
+  //
+  // BUG-003 FIX: kategori 'Uang Muka Dipakai' DITAMBAHKAN ke riwayatPelunasan.
+  // Sebelumnya HANYA 'Pelunasan Hutang Supplier' dan 'DP Pembelian' yang dianggap
+  // pelunasan untuk keperluan jurnal — padahal calculateOutstandingDebt() (sumber
+  // kebenaran tunggal utk saldo hutang) SUDAH menghitung 'Uang Muka Dipakai' sebagai
+  // pengurang hutang sejak fix sebelumnya. Tanpa perbaikan ini, akun 2101 Hutang
+  // Usaha di Buku Besar akan menampilkan saldo LEBIH TINGGI dari saldo hutang
+  // sesungguhnya untuk supplier yang pernah memakai uang muka — inkonsistensi yang
+  // sama persis dengan akar BUG-003, hanya muncul di modul akuntansi double-entry.
   DB.pembelian.forEach(row=>{
     const riwayatPelunasan = DB.kasbank.filter(k=>
-      (k.kategori==='Pelunasan Hutang Supplier'||k.kategori==='DP Pembelian') && k.refId===row.id);
+      (k.kategori==='Pelunasan Hutang Supplier'||k.kategori==='DP Pembelian'||k.kategori==='Uang Muka Dipakai') && k.refId===row.id);
     const punyaRiwayatKasbank = riwayatPelunasan.length > 0;
 
     if(row.status==='Lunas' && !(row.dp>0) && !punyaRiwayatKasbank){
@@ -9024,8 +9247,13 @@ function rebuildSemuaJurnal(){
       // posting sebagai kredit dulu, hutangnya akan dilunasi oleh postBayarHutang di bawah.
       postPembelianKredit(row);
     }
-    // Bayar hutang: cari di kasbank yang refId = row.id
-    riwayatPelunasan.forEach(k=>postBayarHutang(k.tanggal,'KB-'+k.id,Number(k.keluar||0),row.supplier,row.noFaktur));
+    // Bayar hutang: cari di kasbank yang refId = row.id. Field jumlah dibaca dari
+    // k.keluar ATAU k.masuk tergantung kategori — 'Uang Muka Dipakai' dicatat sbg
+    // kas masuk (k.masuk) secara internal, bukan k.keluar seperti 2 kategori lain.
+    riwayatPelunasan.forEach(k=>{
+      const jumlah = k.kategori==='Uang Muka Dipakai' ? Number(k.masuk||0) : Number(k.keluar||0);
+      postBayarHutang(k.tanggal,'KB-'+k.id,jumlah,row.supplier,row.noFaktur);
+    });
   });
   // 2. Produksi
   DB.produksi.forEach(row=>{
