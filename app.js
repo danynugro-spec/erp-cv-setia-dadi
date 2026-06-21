@@ -1958,25 +1958,45 @@ function savePembelian(id, isNew){
   DB.kasbank = DB.kasbank.filter(k=>!(k.kategori==='Uang Muka Dipakai' && k.refId===row.id));
 
   if(status === 'Lunas'){
-    // Lunas langsung (tanpa via pelunasan manual) — catat sebagai DP Pembelian = total
-    if(dp >= total || dp === 0){
-      // Lunas tunai: catat pembayaran penuh
+    // BUG FIX (Sinkronisasi Hutang Supplier): SEBELUMNYA, setiap kali status
+    // 'Lunas' dipilih (apa pun nilai dp), sistem mencatat 'DP Pembelian' = total
+    // PENUH (lunas tunai) — LALU, secara terpisah dan TANPA SYARAT, juga mencoba
+    // memakai uang muka yang tersedia dan mencatatnya SEBAGAI TAMBAHAN
+    // 'Uang Muka Dipakai'. Untuk faktur yang sudah dicatat lunas tunai 100%
+    // (dp===0, keluar:total), uang muka yang "dipakai" ini TIDAK PERNAH
+    // benar-benar dibutuhkan — total yang tercatat "dibayar" untuk faktur itu
+    // jadi (total + dipakaiDariUM), LEBIH BESAR dari nilai faktur sesungguhnya.
+    // Akibatnya uang muka yang seharusnya tetap tersedia untuk mengurangi
+    // hutang faktur LAIN yang benar-benar belum lunas malah "menguap" — dipakai
+    // keliru untuk faktur yang sebenarnya tidak membutuhkannya sama sekali.
+    // Uang muka sekarang HANYA dipakai jika faktur DIBAYAR SEBAGIAN via dp
+    // (dp>0 tapi dp<total) — sisanya (total-dp) yang ditutup dari uang muka,
+    // BUKAN ditambahkan di atas pembayaran tunai penuh yang sudah tercatat.
+    if(dp <= 0 || dp >= total){
+      // Lunas tunai murni: catat pembayaran penuh, TIDAK perlu uang muka sama sekali.
       DB.kasbank.push({
         id: uid(), sumber:'pembelian', tanggal,
         keterangan:`Pembayaran lunas ${labelBarang} dari ${esc(supplier)} (${row.noFaktur})`,
         masuk:0, keluar:total, kategori:'DP Pembelian', refId:row.id
       });
-    }
-    // Jika ada uang muka tersedia
-    const sisaUangMuka = (getUangMukaPerSupplier())[supplier] || 0;
-    if(sisaUangMuka > 0 && total > 0){
-      const dipakaiDariUM = Math.min(total, sisaUangMuka);
+    } else {
+      // Lunas SEBAGIAN via dp, sisanya (total-dp) ditutup dari uang muka jika tersedia.
       DB.kasbank.push({
         id: uid(), sumber:'pembelian', tanggal,
-        keterangan:`Uang muka ${esc(supplier)} dipakai untuk pelunasan (${row.noFaktur})`,
-        masuk:dipakaiDariUM, keluar:0,
-        kategori:'Uang Muka Dipakai', refSupplier:supplier, refId:row.id
+        keterangan:`Pembayaran tunai ${labelBarang} dari ${esc(supplier)} (${row.noFaktur})`,
+        masuk:0, keluar:dp, kategori:'DP Pembelian', refId:row.id
       });
+      const sisaSetelahDp = total - dp;
+      const sisaUangMuka = (getUangMukaPerSupplier())[supplier] || 0;
+      if(sisaUangMuka > 0 && sisaSetelahDp > 0){
+        const dipakaiDariUM = Math.min(sisaSetelahDp, sisaUangMuka);
+        DB.kasbank.push({
+          id: uid(), sumber:'pembelian', tanggal,
+          keterangan:`Uang muka ${esc(supplier)} dipakai untuk pelunasan sisa (${row.noFaktur})`,
+          masuk:dipakaiDariUM, keluar:0,
+          kategori:'Uang Muka Dipakai', refSupplier:supplier, refId:row.id
+        });
+      }
     }
   } else if(dp > 0){
     // Belum Lunas dengan DP
@@ -7503,10 +7523,49 @@ function _buildKartuEvents(supplierNama){
   let saldo = 0;
   events.forEach(e => { saldo += e.debit - e.dp - e.lunas; e.saldo = saldo; });
 
+  // Sinkronisasi saldo berjalan kronologis (e.saldo per baris) dengan saldoAkhir
+  // dari fungsi pusat: jika ada selisih antara iterasi events di atas dan
+  // calculateOutstandingDebt() (mis. karena kategori transaksi baru yang belum
+  // tercermin di breakdown events), seluruh deretan saldo berjalan digeser
+  // sebesar selisih tsb — memastikan baris TERAKHIR pada tabel kronologis
+  // SELALU sama persis dengan total/saldo akhir yang ditampilkan di tempat
+  // lain pada halaman yang sama. Mencegah tampilan dua angka berbeda untuk
+  // supplier yang sama di satu layar.
+  const saldoIterasiAkhir = events.length ? events[events.length-1].saldo : 0;
+  const saldoAkhirPusat = calculateOutstandingDebt(supplierNama).saldoHutang;
+  const koreksi = saldoAkhirPusat - saldoIterasiAkhir;
+  if(Math.abs(koreksi) > 0.5){
+    events.forEach(e => { e.saldo += koreksi; });
+  }
+
   const totDebit = events.reduce((s,e)=>s+e.debit, 0);
   const totDP    = events.reduce((s,e)=>s+e.dp,    0);
   const totLunas = events.reduce((s,e)=>s+e.lunas,  0);
-  const saldoAkhir = Math.max(0, totDebit - totDP - totLunas);
+
+  // ============================================================
+  // SINKRONISASI HUTANG SUPPLIER — PERBAIKAN KRITIS
+  // ============================================================
+  // SEBELUMNYA, saldoAkhir dihitung MURNI dari iterasi events di atas
+  // (totDebit - totDP - totLunas), independen sepenuhnya dari
+  // calculateOutstandingDebt(). Walau secara logika kedua pendekatan
+  // ditujukan menghasilkan angka yang sama, keduanya adalah DUA
+  // IMPLEMENTASI TERPISAH yang dipelihara secara manual — setiap
+  // penambahan kategori transaksi baru (mis. kategori kasbank baru di
+  // masa depan) HARUS diperbarui di KEDUA tempat secara konsisten, atau
+  // keduanya akan diam-diam divergen. Ini persis pola yang dilaporkan:
+  // Rekap Hutang Supplier (memanggil calculateOutstandingDebt) dan Kartu
+  // Supplier (sebelumnya memakai totDebit-totDP-totLunas independen)
+  // menampilkan angka berbeda.
+  //
+  // PERBAIKAN: saldoAkhir SEKARANG WAJIB diambil dari
+  // calculateOutstandingDebt(supplierNama).saldoHutang — SATU-SATUNYA
+  // sumber kebenaran untuk saldo hutang di SELURUH aplikasi (Rekap
+  // Hutang, Kartu Supplier, Laporan Hutang, Buku Besar, dan Dashboard
+  // bila menampilkan KPI hutang). Breakdown events/totDebit/totDP/totLunas
+  // di atas TETAP dipertahankan apa adanya — itu murni untuk tampilan
+  // riwayat kronologis per-transaksi (Kartu Supplier butuh detail ini),
+  // BUKAN untuk menentukan angka saldo akhir yang ditampilkan.
+  const saldoAkhir = calculateOutstandingDebt(supplierNama).saldoHutang;
   return { events, totDebit, totDP, totLunas, saldoAkhir };
 }
 
