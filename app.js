@@ -4979,14 +4979,11 @@ function editProduksi(id){
   // dipanggil ulang (mis. dari alur "Kembali Edit" di Konfirmasi Produksi),
   // yang sebelumnya menyebabkan gap nomor batch (BTC-003 dibuat tapi tidak
   // pernah dipakai, batch sesungguhnya tersimpan sebagai BTC-004, dst).
-  // BUG-007 FIX: flag gabahManualSet membedakan SECARA EKSPLISIT antara nilai
-  // pr_gabah yang diisi MANUAL oleh operator (mengetik langsung di field itu)
-  // vs nilai yang di-AUTO-FILL oleh sistem (dari Total Qty Dipakai sumber gabah).
-  // Sebelumnya kedua kondisi ini tidak bisa dibedakan (keduanya sama-sama
-  // mengubah .value), sehingga begitu field terisi SEKALI oleh sistem sendiri,
-  // auto-update lanjutan terblokir permanen — Gabah Masuk Giling tidak lagi
-  // mengikuti Total Qty walau operator tidak pernah mengetik manual di sana.
-  window._produksiEdit = {id: row.id, isNew, batch: row.batch, gabahManualSet: Number(row.gabah||0) > 0 && (row.sumberGabah||[]).length === 0, sumberGabah: JSON.parse(JSON.stringify(row.sumberGabah||[]))};
+  // BUG-009 FIX: flag gabahManualSet (BUG-007) DIHAPUS dari context — model
+  // bisnis baru tidak lagi punya konsep "manual override" untuk Gabah Masuk
+  // Giling; field tsb sekarang SELALU murni turunan dari Total Qty Dipakai
+  // (lihat autoFillGabahMasukGiling()).
+  window._produksiEdit = {id: row.id, isNew, batch: row.batch, sumberGabah: JSON.parse(JSON.stringify(row.sumberGabah||[]))};
 
   openModal(`
     <h2>${isNew?'Batch Produksi Baru':'Ubah Batch Produksi'}</h2>
@@ -5029,12 +5026,12 @@ function editProduksi(id){
         <div class="field">
           <label>Gabah Masuk Giling (Kg) — Input Tahap 1</label>
           <input type="number" id="pr_gabah" value="${row.gabah||0}" min="0"
-            oninput="_markGabahManualInput(); calcRendemenPreview(); validateSumberGabah(); calcPKSekamSisa();">
+            oninput="calcRendemenPreview(); validateSumberGabah(); calcPKSekamSisa();">
         </div>
       </div>
 
       <div class="section-divider">Sumber Gabah &amp; HPP</div>
-      <p class="help-text" style="margin-top:-4px;">Sumber gabah terisi otomatis (FIFO) saat Jenis Gabah dipilih. HPP dihitung realtime dari rata-rata tertimbang harga gabah.</p>
+      <p class="help-text" style="margin-top:-4px;">Pilih Jenis Gabah untuk memfilter daftar faktur, lalu klik "+ Tambah Sumber Gabah" untuk memilih faktur pembelian secara manual. HPP dihitung realtime dari rata-rata tertimbang harga gabah faktur yang dipilih.</p>
       <div id="sumberGabahBox"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
         <button class="btn btn-secondary btn-sm" style="width:auto;" onclick="addSumberGabahRow()">+ Tambah Sumber Gabah</button>
@@ -5245,58 +5242,73 @@ function updateProduksiBahanForm(){
 // Requirement #1 — Auto Complete Sumber Gabah: dipanggil saat Jenis Gabah
 // dipilih. Mengisi SEMUA stok yang tersedia secara otomatis (FIFO),
 // tidak perlu klik "+ Tambah Sumber Gabah" berulang kali.
+// BUG-009 FIX (Business Logic Produksi): SEBELUMNYA memilih Jenis Gabah
+// otomatis menampilkan SELURUH stok yang tersedia (lewat
+// ProductionCalculationService.buildAutoSumberGabah()) — tidak sesuai
+// operasional nyata penggilingan padi. Operator perlu memilih SENDIRI
+// faktur pembelian mana yang dipakai untuk batch ini (mis. PB-0004,
+// PB-0008, PB-0062 — kombinasi tertentu, BUKAN seluruh stok yang ada).
+//
+// Diperbaiki: Jenis Gabah sekarang MURNI berfungsi sebagai FILTER untuk
+// dropdown pemilihan sumber (lihat getPembelianOptionsForSumber(), yang
+// sudah benar memfilter berdasarkan jenisGabah + sisa>0 sejak awal dan
+// TIDAK diubah oleh fix ini). Memilih Jenis Gabah TIDAK LAGI mengisi
+// baris sumber gabah apa pun — tabel tetap kosong sampai operator
+// mengklik "+ Tambah Sumber Gabah" dan memilih faktur secara eksplisit
+// satu per satu.
+//
+// Jika sebelumnya sudah ada baris sumber gabah dari jenis gabah yang
+// berbeda (operator ganti pilihan Jenis Gabah di tengah jalan), baris-
+// baris lama TETAP DIBERSIHKAN — sumber dari jenis gabah lama tidak
+// relevan lagi untuk jenis gabah baru yang dipilih, dan mempertahankannya
+// hanya akan membingungkan (faktur jenis lama tidak akan muncul lagi di
+// dropdown filter jenis baru, tapi qty-nya tetap "tersangkut" di tabel).
 function onJenisGabahChange(){
   const ctx = window._produksiEdit;
   const jenisGabah = document.getElementById('pr_jenis').value;
-  if(!jenisGabah){ ctx.sumberGabah = []; renderSumberGabahPicker(); return; }
-
-  // Hanya auto-isi jika daftar sumber masih kosong (belum ada pilihan manual
-  // operator) ATAU jenis gabah baru saja berganti — mencegah qty yang sudah
-  // diedit operator tertimpa ulang tanpa sengaja saat re-render lain dipicu.
-  ctx.sumberGabah = ProductionCalculationService.buildAutoSumberGabah(jenisGabah, ctx.id);
+  ctx.sumberGabah = [];
   renderSumberGabahPicker();
   autoFillGabahMasukGiling();
 }
 
 // Requirement #3 — Gabah Masuk Giling otomatis = total Qty Dipakai (realtime),
 // HANYA jika field kosong/0 (tidak menimpa input manual operator).
-function _markGabahManualInput(){
-  const ctx = window._produksiEdit;
-  if(ctx) ctx.gabahManualSet = true;
-}
-
+// BUG-009 FIX (Business Logic Produksi) — Requirement #5: "Gabah Masuk
+// Giling tidak diinput manual. Nilainya otomatis berasal dari Total Qty
+// Dipakai. Jika Qty berubah, Gabah Masuk Giling berubah realtime."
+//
+// SEBELUMNYA (BUG-007) field ini punya mekanisme "manual override" —
+// begitu operator pernah mengetik manual di field tsb, perubahan Qty
+// Dipakai selanjutnya TIDAK LAGI memperbarui nilainya. Itu BENAR untuk
+// model bisnis lama (operator boleh menetapkan target produksi sendiri,
+// independen dari sumber gabah yang dipilih). Model bisnis BARU
+// membalik ini sepenuhnya: field ini BUKAN target yang diinput manual —
+// ia murni TURUNAN dari sumber gabah yang dipilih operator (mencerminkan
+// "berapa kg gabah yang benar-benar masuk giling dari faktur-faktur yang
+// dipilih"), sehingga harus SELALU sinkron dengan Total Qty Dipakai.
+//
+// Mekanisme gabahManualSet/​_markGabahManualInput() (BUG-007) dihapus —
+// fungsi ini sekarang TANPA SYARAT menimpa nilai field setiap kali
+// dipanggil (dipanggil dari setiap perubahan qty sumber gabah — lihat
+// _handleQtyInputDelegated(), addSumberGabahRow(), removeSumberGabahRow(),
+// updateSumberGabah()). Elemen <input> itu sendiri TIDAK diubah jadi
+// readonly secara visual (instruksi: jangan mengubah UI) — operator
+// SECARA TEKNIS masih bisa mengetik di sana, tapi nilai apa pun yang
+// diketik akan langsung tertimpa lagi pada perubahan qty sumber gabah
+// berikutnya, sesuai business rule baru.
 function autoFillGabahMasukGiling(){
   const ctx = window._produksiEdit;
   const gabahInput = document.getElementById('pr_gabah');
-  if(!gabahInput) return;
-  // BUG-007 FIX: SEBELUMNYA dicek dengan `if(Number(gabahInput.value)||0) return;`
-  // — begitu field terisi APAPUN (termasuk hasil auto-fill sistem sendiri di
-  // pemanggilan sebelumnya), kondisi ini SELALU true, sehingga auto-update
-  // lanjutan dari Total Qty Dipakai terblokir PERMANEN. Akibatnya: pilih Jenis
-  // Gabah (auto-fill gabah=1000) -> ubah Qty Dipakai jadi 600 -> Gabah Masuk
-  // Giling TETAP 1000, tidak pernah ikut 600, padahal field itu tidak pernah
-  // diisi manual oleh operator sama sekali.
-  // Diperbaiki memakai flag eksplisit ctx.gabahManualSet — HANYA true jika
-  // operator benar-benar mengetik di field pr_gabah itu sendiri (lihat
-  // _markGabahManualInput(), dipasang di oninput field tsb). Assignment
-  // .value oleh sistem (baris di bawah, dan gunakanSemuaStok()) TIDAK memicu
-  // event 'input' DOM, sehingga flag ini tidak pernah ter-set oleh sistem.
-  if(ctx && ctx.gabahManualSet) return;
-  const newValue = ProductionCalculationService.computeGabahMasukGiling(ctx.sumberGabah, 0);
-  // BUG FIX KRITIS (ditemukan lewat QA end-to-end Playwright): SEBELUMNYA
-  // memakai fmtNum(newValue) yang menghasilkan format Indonesia "1.000"
-  // (titik sebagai pemisah ribuan). <input type="number"> TIDAK menolak
-  // string ini saat di-assign langsung ke .value (tersimpan apa adanya),
-  // TAPI setiap pembacaan berikutnya via Number(input.value) akan SALAH
-  // total — JavaScript membaca "1.000" sebagai desimal (titik = pemisah
-  // desimal), sehingga Number("1.000") = 1, BUKAN 1000. Akibatnya Gabah
-  // Masuk Giling yang seharusnya 1000kg terbaca sebagai 1kg di semua
-  // perhitungan berikutnya (validasi, ringkasan, konfirmasi, simpan).
-  // <input type="number"> HARUS diisi angka polos tanpa pemisah ribuan.
-  gabahInput.value = newValue > 0 ? newValue : '';
+  if(!gabahInput || !ctx) return;
+  const total = (ctx.sumberGabah||[]).reduce((s,r)=> s + (Number(r.qty)||0), 0);
+  // Angka polos tanpa pemisah ribuan WAJIB dipakai untuk <input type="number">
+  // (bug format Indonesia "1.000" dibaca JavaScript sebagai 1, bukan 1000 —
+  // ditemukan & diperbaiki sebelumnya, dipertahankan di sini).
+  gabahInput.value = total > 0 ? total : '';
   calcRendemenPreview();
   calcPKSekamSisa();
 }
+
 
 // Requirement #4a — "⚡ Isi Otomatis (FIFO)": alokasikan qty FIFO hingga
 // target produksi (nilai yang sudah ada di Gabah Masuk Giling) tercapai.
@@ -5310,6 +5322,12 @@ function isiOtomatisFIFO(){
   const result = ProductionCalculationService.autoAllocateFIFO(jenisGabah, target, ctx.id);
   ctx.sumberGabah = result.sumberGabah;
   renderSumberGabahPicker();
+  // BUG-009 FIX: Gabah Masuk Giling SELALU mengikuti Total Qty Dipakai —
+  // dipanggil di sini agar field ini konsisten dengan hasil alokasi
+  // sesungguhnya (mis. jika stok TIDAK mencukupi target, total qty yang
+  // teralokasi akan LEBIH KECIL dari target awal yang diketik; field harus
+  // mencerminkan angka yang sesungguhnya teralokasi, bukan target awal).
+  autoFillGabahMasukGiling();
   if(!result.tercukupi){
     showToast(`⚠ Stok tidak mencukupi. Kurang ${fmtNum(result.kurang)} kg dari target.`);
   } else {
@@ -5331,23 +5349,10 @@ function gunakanSemuaStok(){
     ctx.sumberGabah = ProductionCalculationService.useAllStock(ctx.sumberGabah, jenisGabah, ctx.id);
   }
   renderSumberGabahPicker();
-  // Gabah Masuk Giling WAJIB mengikuti total saat tombol ini ditekan (override manual).
-  // BUG FIX KRITIS: SEBELUMNYA pakai fmtNum(total) — sama persis bug yang
-  // ditemukan di autoFillGabahMasukGiling() (lihat catatan di sana). Angka
-  // polos tanpa pemisah ribuan WAJIB dipakai untuk <input type="number">.
-  const gabahInput = document.getElementById('pr_gabah');
-  if(gabahInput){
-    const total = ctx.sumberGabah.reduce((s,r)=>s+(Number(r.qty)||0), 0);
-    gabahInput.value = total;
-    // BUG-007 FIX: reset flag manual — tombol ini SENGAJA override nilai
-    // field (termasuk jika sebelumnya pernah diisi manual oleh operator),
-    // dan setelah override ini field harus kembali auto-follow Total Qty
-    // untuk perubahan qty berikutnya (konsisten dengan harapan "Gabah
-    // Masuk Giling otomatis mengikuti total" pada Requirement #4b).
-    ctx.gabahManualSet = false;
-    calcRendemenPreview();
-    calcPKSekamSisa();
-  }
+  // Gabah Masuk Giling otomatis mengikuti total qty sumber yang dipilih
+  // (selalu sinkron — lihat autoFillGabahMasukGiling(), tidak ada lagi
+  // konsep "manual override" sejak BUG-009).
+  autoFillGabahMasukGiling();
   showToast('Seluruh stok tersedia dipakai.');
 }
 
@@ -5367,7 +5372,7 @@ function renderSumberGabahPicker(){
   const sumber = ctx.sumberGabah;
 
   if(sumber.length===0){
-    box.innerHTML = `<div class="help-text" style="margin:8px 0;">${jenisGabah ? 'Tidak ada stok tersedia untuk jenis gabah ini, atau klik "+ Tambah Sumber Gabah" untuk menambahkan manual.' : 'Pilih Jenis Gabah untuk menampilkan sumber stok secara otomatis (FIFO).'}</div>`;
+    box.innerHTML = `<div class="help-text" style="margin:8px 0;">${jenisGabah ? 'Belum ada sumber gabah dipilih. Klik "+ Tambah Sumber Gabah" untuk memilih faktur pembelian secara manual.' : 'Pilih Jenis Gabah terlebih dahulu untuk memfilter daftar faktur pembelian yang tersedia.'}</div>`;
     renderRingkasanSumberGabah();
     updateHppPreview();
     return;
@@ -5624,6 +5629,7 @@ function addSumberGabahRow(){
   const ctx = window._produksiEdit;
   ctx.sumberGabah.push({pembelianId:'', qty:0, harga:0});
   renderSumberGabahPicker();
+  autoFillGabahMasukGiling();
 }
 function removeSumberGabahRow(idx){
   const ctx = window._produksiEdit;
