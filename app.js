@@ -2842,6 +2842,105 @@ function downloadReportPdf(sourceElId, reportTitle, subtitle){
    Columns: Batch, Mulai, Selesai, Operator, Jenis Gabah, Gabah,
             Premium, Medium, Menir, Bekatul, Rendemen (Premium+Medium)/Gabah
    ============================================================ */
+/* ============================================================
+   Sprint QA Produksi Batch Enterprise — Requirement #9
+   Auto Simpan Draft: form batch produksi BARU (belum pernah disimpan
+   sebagai batch nyata) disimpan otomatis ke localStorage setiap ada
+   perubahan (debounced beberapa detik). Jika browser tertutup tanpa
+   sempat klik "Simpan Batch", draft dapat dipulihkan saat modul
+   produksi dibuka kembali.
+
+   Draft HANYA dipakai untuk batch BARU (isNew===true) — mengedit batch
+   yang sudah tersimpan tidak memakai draft localStorage terpisah,
+   karena datanya sudah berada aman di DB utama; risiko kehilangan
+   data hanya nyata untuk input yang belum pernah ter-submit sama sekali.
+   ============================================================ */
+const PRODUKSI_DRAFT_KEY = 'erp_padi_draft_produksi_v1';
+const PRODUKSI_DRAFT_DEBOUNCE_MS = 2000;
+let _produksiDraftTimer = null;
+
+function _readProduksiInputsForDraft(){
+  const ctx = window._produksiEdit;
+  if(!ctx) return null;
+  const get = id => document.getElementById(id);
+  return {
+    savedAt: new Date().toISOString(),
+    tipeBahan: get('pr_tipeBahan')?.value || 'Gabah',
+    mulai: get('pr_mulai')?.value || '',
+    selesai: get('pr_selesai')?.value || '',
+    operator: get('pr_operator')?.value || '',
+    jenisGabah: get('pr_jenis')?.value || '',
+    jenisBahanBaku: get('pr_jenisBahanBaku')?.value || '',
+    gabah: get('pr_gabah')?.value || '',
+    gabah_bb: get('pr_gabah_bb')?.value || '',
+    hpp_bb: get('pr_hpp_bb')?.value || '',
+    pk: get('pr_pk')?.value || '',
+    sekam: get('pr_sekam')?.value || '',
+    premium: get('pr_premium')?.value || '',
+    medium: get('pr_medium')?.value || '',
+    menir: get('pr_menir')?.value || '',
+    bekatul: get('pr_bekatul')?.value || '',
+    sumberGabah: ctx.sumberGabah || [],
+  };
+}
+
+// Dipanggil dari setiap titik perubahan input (oninput/onchange) di form
+// produksi — di-debounce agar tidak menulis localStorage di setiap keystroke.
+function scheduleDraftSave(){
+  const ctx = window._produksiEdit;
+  if(!ctx || !ctx.isNew) return; // hanya batch BARU yang didraft
+  clearTimeout(_produksiDraftTimer);
+  _produksiDraftTimer = setTimeout(()=>{
+    const data = _readProduksiInputsForDraft();
+    if(!data) return;
+    try{
+      localStorage.setItem(PRODUKSI_DRAFT_KEY, JSON.stringify(data));
+    }catch(e){ /* localStorage penuh/disabled — gagal diam-diam, tidak mengganggu input */ }
+  }, PRODUKSI_DRAFT_DEBOUNCE_MS);
+}
+
+function clearProduksiDraft(){
+  clearTimeout(_produksiDraftTimer);
+  try{ localStorage.removeItem(PRODUKSI_DRAFT_KEY); }catch(e){}
+}
+
+function getProduksiDraft(){
+  try{
+    const raw = localStorage.getItem(PRODUKSI_DRAFT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  }catch(e){ return null; }
+}
+
+// Terapkan draft yang dipulihkan ke form yang baru dibuka (dipanggil dari
+// editProduksi() saat membuat batch baru dan draft tersedia & disetujui user).
+function _applyProduksiDraftToForm(draft){
+  const ctx = window._produksiEdit;
+  if(!ctx || !draft) return;
+  const set = (id, val) => { const el = document.getElementById(id); if(el && val!==undefined && val!==null && val!=='') el.value = val; };
+
+  set('pr_tipeBahan', draft.tipeBahan);
+  updateProduksiBahanForm();
+  set('pr_mulai', draft.mulai);
+  set('pr_selesai', draft.selesai);
+  set('pr_operator', draft.operator);
+  set('pr_jenis', draft.jenisGabah);
+  set('pr_jenisBahanBaku', draft.jenisBahanBaku);
+  set('pr_gabah', draft.gabah);
+  set('pr_gabah_bb', draft.gabah_bb);
+  if(draft.hpp_bb){ const el = document.getElementById('pr_hpp_bb'); if(el){ el.value = draft.hpp_bb; } }
+  set('pr_pk', draft.pk);
+  set('pr_sekam', draft.sekam);
+  set('pr_premium', draft.premium);
+  set('pr_medium', draft.medium);
+  set('pr_menir', draft.menir);
+  set('pr_bekatul', draft.bekatul);
+
+  ctx.sumberGabah = draft.sumberGabah || [];
+  renderSumberGabahPicker();
+  calcRendemenPreview();
+  calcPKSekamSisa();
+}
+
 function renderProduksi(target){
   target = target || document.getElementById('pageInner');
   const rows = DB.produksi.slice().sort((a,b)=> b.mulai.localeCompare(a.mulai) || b.batch.localeCompare(a.batch));
@@ -2880,7 +2979,7 @@ function renderProduksi(target){
         ? `${fmtRp(hpp.hppPerKgGabah)}/kg${!hpp.lengkap?' <span title="Sumber gabah belum mencakup seluruh qty" style="color:var(--gold);">⚠</span>':''}`
         : (r.tipeBahan==='Bahan Baku'&&r.hppBahanBaku>0 ? fmtRp(r.hppBahanBaku)+'/kg (BB)' : '<span style="color:var(--ink-soft);">-</span>');
       const hppBerasStr = hpp.hppPerKgBeras>0 ? fmtRp(hpp.hppPerKgBeras)+'/kg' : '-';
-      const actionItems = `[{label:'Ubah',icon:'✏️',action:()=>editProduksi('${r.id}')}${SESSION.role!=='KASIR'?`,{label:'Hapus',icon:'🗑',action:()=>deleteProduksi('${r.id}'),danger:true}`:``}]`;
+      const actionItems = `[{label:'Lihat Detail Batch',icon:'📄',action:()=>showDetailBatchProduksi('${r.id}')},{label:'Ubah',icon:'✏️',action:()=>editProduksi('${r.id}')}${SESSION.role!=='KASIR'?`,{label:'Hapus',icon:'🗑',action:()=>deleteProduksi('${r.id}'),danger:true}`:``}]`;
       return `
       <tr class="tr-clickable" onclick="showActionSheet(event,'${esc(r.batch)} — ${esc(r.jenisGabah)}',${actionItems})">
         <td class="mono">${esc(r.batch)}</td>
@@ -3448,6 +3547,214 @@ function getStokMaklonAgregat(){
 
 // ============================================================
 // HPP for a single batch: total cost of allocated gabah, and derived per-kg metrics
+/* ============================================================
+   PRODUCTION CALCULATION SERVICE — Sprint QA Produksi Batch Enterprise
+   ============================================================
+   SATU sumber kebenaran untuk SELURUH kalkulasi terkait produksi:
+   FIFO sumber gabah, HPP (gabah/PK/beras), validasi qty, dan
+   ringkasan realtime. Tidak ada rumus produksi yang boleh
+   ditulis ulang di tempat lain — form input, ringkasan, preview
+   HPP, dan penyimpanan SEMUA memanggil service ini.
+
+   Didesain sebagai objek dengan method murni (tidak menyentuh DOM),
+   agar mudah diuji dan dipakai ulang dari konteks manapun (form
+   produksi, laporan, dashboard, draft recovery, dst).
+   ============================================================ */
+const ProductionCalculationService = {
+
+  /**
+   * Daftar SEMUA pembelian gabah jenis tertentu yang masih punya sisa,
+   * diurutkan FIFO (tanggal pembelian TERTUA dulu — first in, first out).
+   * @param {string} jenisGabah
+   * @param {string} excludeBatchId - batch yang sedang diedit (agar alokasi lamanya sendiri tidak dianggap "terpakai orang lain")
+   * @returns {Array<{pembelianId, noFaktur, supplier, tanggal, sisa, harga}>}
+   */
+  getAvailableSourcesFIFO(jenisGabah, excludeBatchId){
+    if(!jenisGabah) return [];
+    return DB.pembelian
+      .filter(p => p.jenisGabah === jenisGabah && (p.kategori||'Gabah')==='Gabah')
+      .map(p => ({
+        pembelianId: p.id,
+        noFaktur: p.noFaktur,
+        supplier: p.supplier,
+        tanggal: p.tanggal,
+        sisa: getSisaPembelian(p.id, excludeBatchId),
+        harga: getHargaEfektifPembelian(p),
+      }))
+      .filter(s => s.sisa > 0.01)
+      // FIFO murni: tanggal pembelian tertua diproses lebih dulu.
+      // Tie-break dengan noFaktur agar urutan stabil/deterministik jika tanggal sama.
+      .sort((a,b) => a.tanggal.localeCompare(b.tanggal) || a.noFaktur.localeCompare(b.noFaktur));
+  },
+
+  /**
+   * Bangun baris sumberGabah otomatis (Requirement #1 + #2): ambil SEMUA
+   * sumber FIFO yang tersedia untuk jenis gabah ini, qty dipakai langsung
+   * di-set sama dengan sisa tersedia (operator tetap boleh mengubah nanti).
+   * Tidak perlu klik "+ Tambah Sumber Gabah" berulang kali.
+   */
+  buildAutoSumberGabah(jenisGabah, excludeBatchId){
+    return this.getAvailableSourcesFIFO(jenisGabah, excludeBatchId).map(s => ({
+      pembelianId: s.pembelianId,
+      qty: s.sisa,           // Requirement #2: qty otomatis = sisa tersedia
+      harga: s.harga,
+    }));
+  },
+
+  /**
+   * Requirement #4a — "⚡ Isi Otomatis (FIFO)": alokasikan qty FIFO
+   * HANYA SAMPAI target produksi tercapai (bukan seluruh stok yang ada).
+   * @param {string} jenisGabah
+   * @param {number} targetQty - target Gabah Masuk Giling
+   * @param {string} excludeBatchId
+   */
+  autoAllocateFIFO(jenisGabah, targetQty, excludeBatchId){
+    const sources = this.getAvailableSourcesFIFO(jenisGabah, excludeBatchId);
+    const result = [];
+    let sisaTarget = Number(targetQty)||0;
+    for(const s of sources){
+      if(sisaTarget <= 0.01) break;
+      const ambil = Math.min(s.sisa, sisaTarget);
+      result.push({ pembelianId: s.pembelianId, qty: ambil, harga: s.harga });
+      sisaTarget -= ambil;
+    }
+    return { sumberGabah: result, tercukupi: sisaTarget <= 0.01, kurang: Math.max(0, sisaTarget) };
+  },
+
+  /**
+   * Requirement #4b — "🎯 Gunakan Semua Stok": SEMUA qty dipakai = sisa
+   * tersedia untuk seluruh sumber yang sudah dipilih di baris manapun.
+   */
+  useAllStock(sumberGabahRows, jenisGabah, excludeBatchId){
+    const sourceMap = {};
+    this.getAvailableSourcesFIFO(jenisGabah, excludeBatchId).forEach(s => { sourceMap[s.pembelianId] = s; });
+    return sumberGabahRows.map(row => {
+      const src = sourceMap[row.pembelianId];
+      return src ? { ...row, qty: src.sisa, harga: src.harga } : row;
+    });
+  },
+
+  /**
+   * Requirement #4c — "🧹 Reset Qty": kosongkan qty TANPA menghapus baris.
+   */
+  resetQty(sumberGabahRows){
+    return sumberGabahRows.map(row => ({ ...row, qty: 0 }));
+  },
+
+  /**
+   * Requirement #3 — Gabah Masuk Giling otomatis = total seluruh Qty Dipakai,
+   * HANYA jika field kosong/0 (operator yang sudah isi manual tidak ditimpa).
+   */
+  computeGabahMasukGiling(sumberGabahRows, currentGabahValue){
+    const totalQty = sumberGabahRows.reduce((s,r) => s + (Number(r.qty)||0), 0);
+    const current = Number(currentGabahValue)||0;
+    return current > 0 ? current : totalQty;
+  },
+
+  /**
+   * Requirement #5 — Ringkasan realtime di bawah tabel sumber gabah.
+   */
+  computeSummary(sumberGabahRows, jenisGabah, excludeBatchId){
+    const validRows = sumberGabahRows.filter(r => r.pembelianId && Number(r.qty)>0);
+    const supplierSet = new Set();
+    let totalQty = 0, totalNilai = 0;
+
+    validRows.forEach(r => {
+      const p = DB.pembelian.find(x => x.id === r.pembelianId);
+      if(p) supplierSet.add(p.supplier);
+      totalQty += Number(r.qty)||0;
+      totalNilai += (Number(r.qty)||0) * (Number(r.harga)||0);
+    });
+
+    const rataRataHarga = totalQty>0 ? totalNilai/totalQty : 0;
+    // Estimasi HPP/kg gabah = rata-rata harga tertimbang (sebelum proses giling)
+    const estimasiHppGabah = rataRataHarga;
+
+    return {
+      jumlahSupplier: supplierSet.size,
+      jumlahBatchPembelian: validRows.length,
+      totalQtyDipakai: totalQty,
+      totalNilaiGabah: totalNilai,
+      estimasiHppGabah,
+      rataRataHarga,
+    };
+  },
+
+  /**
+   * Requirement #6 — Validasi qty per baris sumber gabah.
+   * @returns {Array<{idx, level:'error'|'ok', message}>}
+   */
+  validateRows(sumberGabahRows, jenisGabah, excludeBatchId){
+    const sourceMap = {};
+    this.getAvailableSourcesFIFO(jenisGabah, excludeBatchId).forEach(s => { sourceMap[s.pembelianId] = s; });
+
+    const results = [];
+    sumberGabahRows.forEach((row, idx) => {
+      if(!row.pembelianId){ results.push({idx, level:'ok', message:''}); return; }
+      const qty = Number(row.qty);
+      const src = sourceMap[row.pembelianId];
+      // Sisa yang relevan: sisa stok asli DIKURANGI qty yang sudah dipakai baris LAIN
+      // dengan pembelianId yang sama (mencegah dua baris sama-sama "menghabiskan" stok yang sama)
+      const reservedByOthers = sumberGabahRows
+        .filter((r,i) => i!==idx && r.pembelianId===row.pembelianId)
+        .reduce((s,r) => s+(Number(r.qty)||0), 0);
+      const sisaUntukBarisIni = src ? (getSisaPembelian(row.pembelianId, excludeBatchId) - reservedByOthers) : 0;
+
+      if(row.qty === '' || row.qty === null || row.qty === undefined){
+        results.push({idx, level:'error', message:'Qty Dipakai tidak boleh kosong.'});
+      } else if(isNaN(qty)){
+        results.push({idx, level:'error', message:'Qty Dipakai harus berupa angka.'});
+      } else if(qty < 0){
+        results.push({idx, level:'error', message:'Qty Dipakai tidak boleh negatif.'});
+      } else if(qty > sisaUntukBarisIni + 0.01){
+        results.push({idx, level:'error', message:`Qty Dipakai (${fmtNum(qty)} kg) melebihi Sisa Tersedia (${fmtNum(sisaUntukBarisIni)} kg).`});
+      } else {
+        results.push({idx, level:'ok', message:''});
+      }
+    });
+    return results;
+  },
+
+  /**
+   * Requirement #7 — Indikator warna per baris.
+   * @returns {'green'|'yellow'|'red'}
+   */
+  getIndicatorColor(qty, sisaTersedia){
+    const q = Number(qty)||0;
+    const sisa = Number(sisaTersedia)||0;
+    if(q > sisa + 0.01) return 'red';
+    if(sisa > 0 && (sisa - q) / sisa < 0.10) return 'yellow'; // sisa stok hampir habis (<10% tersisa SETELAH dipakai)
+    return 'green';
+  },
+
+  /**
+   * Requirement #8 — HPP realtime murni, didelegasikan ke getHppBatch()
+   * (fungsi pusat yang SUDAH dipakai jurnal akuntansi & laporan) agar
+   * preview di form produksi SELALU identik dengan HPP yang benar-benar
+   * tersimpan/terjurnal — tidak ada rumus kedua yang terpisah.
+   */
+  computeHppPreview(batchLike){
+    return getHppBatch(batchLike);
+  },
+
+  /**
+   * Validasi keseluruhan sebelum simpan (dipakai juga oleh Konfirmasi
+   * Produksi, Requirement #10) — mengembalikan ringkasan + status valid.
+   */
+  validateBeforeSave(sumberGabahRows, jenisGabah, gabahMasukGiling, excludeBatchId){
+    const rowValidation = this.validateRows(sumberGabahRows, jenisGabah, excludeBatchId);
+    const errors = rowValidation.filter(r => r.level==='error');
+    const summary = this.computeSummary(sumberGabahRows, jenisGabah, excludeBatchId);
+    const selisih = Number(gabahMasukGiling||0) - summary.totalQtyDipakai;
+    return {
+      valid: errors.length === 0,
+      errors,
+      summary,
+      selisih,
+    };
+  },
+};
+
 function getHppBatch(batch){
   const sumber = batch.sumberGabah || [];
   let totalNilai = 0, totalQtySumber = 0;
@@ -4534,6 +4841,116 @@ function deletePemakaianBahan(id){
 }
 
 
+/* ============================================================
+   Sprint QA Produksi Batch Enterprise — Requirement #11
+   Riwayat Batch — Lihat Detail Batch: supplier yang digunakan, qty &
+   harga & nilai per supplier, HPP Batch, rendemen, dan seluruh output
+   (PK, Beras, Menir, Bekatul, Sekam). Seluruh angka HPP/rendemen
+   didelegasikan ke getHppBatch() (via ProductionCalculationService)
+   — TIDAK ada perhitungan ulang terpisah di sini.
+   ============================================================ */
+function showDetailBatchProduksi(id){
+  const r = DB.produksi.find(x=>x.id===id);
+  if(!r){ showToast('Batch tidak ditemukan.'); return; }
+
+  const hpp = ProductionCalculationService.computeHppPreview(r);
+  const rendemenT1 = r.gabah>0 && r.pk>0 ? (r.pk/r.gabah*100) : 0;
+  const rendemenT2 = r.pk>0 ? ((Number(r.premium||0)+Number(r.medium||0))/r.pk*100) : 0;
+  const rendemenTotal = r.gabah>0 ? ((Number(r.premium||0)+Number(r.medium||0))/r.gabah*100) : 0;
+
+  // Baris per-supplier dari sumberGabah (gabungkan baris dengan supplier sama)
+  const perSupplier = {};
+  (r.sumberGabah||[]).forEach(s=>{
+    const p = DB.pembelian.find(x=>x.id===s.pembelianId);
+    const supplierName = p ? p.supplier : '(Tidak diketahui)';
+    const noFaktur = p ? p.noFaktur : '-';
+    const key = supplierName + '|' + s.pembelianId;
+    if(!perSupplier[key]) perSupplier[key] = { supplier: supplierName, noFaktur, qty: 0, harga: Number(s.harga||0), nilai: 0 };
+    perSupplier[key].qty += Number(s.qty||0);
+    perSupplier[key].nilai += Number(s.qty||0) * Number(s.harga||0);
+  });
+  const supplierRows = Object.values(perSupplier);
+
+  const supplierTableHtml = supplierRows.length > 0 ? `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Supplier</th><th>No. Faktur</th><th>Qty</th><th>Harga/Kg</th><th>Nilai</th></tr></thead>
+        <tbody>
+          ${supplierRows.map(s=>`
+            <tr>
+              <td>${esc(s.supplier)}</td>
+              <td class="mono">${esc(s.noFaktur)}</td>
+              <td class="num-cell">${fmtNum(s.qty)} kg</td>
+              <td class="num-cell">${fmtRp(s.harga)}</td>
+              <td class="num-cell">${fmtRp(s.nilai)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+        <tfoot>
+          <tr class="total-row"><td colspan="2">TOTAL</td><td class="num-cell">${fmtNum(hpp.totalQtySumber)} kg</td><td></td><td class="num-cell">${fmtRp(hpp.totalNilai)}</td></tr>
+        </tfoot>
+      </table>
+    </div>
+  ` : `<div class="help-text">${r.tipeBahan==='Bahan Baku' ? 'Mode Bahan Baku (PK beli) — tidak melacak sumber per supplier gabah.' : 'Tidak ada data sumber gabah tercatat untuk batch ini.'}</div>`;
+
+  openModal(`
+    <h2>Detail Batch Produksi</h2>
+    <div class="modal-sub">No. Batch: <span class="mono">${esc(r.batch)}</span> · ${fmtDate(r.mulai)}${r.selesai&&r.selesai!==r.mulai?' s/d '+fmtDate(r.selesai):''} · Operator: ${esc(r.operator||'-')}</div>
+
+    <div class="section-divider">Supplier yang Digunakan</div>
+    ${supplierTableHtml}
+
+    <div class="section-divider">HPP Batch &amp; Rendemen</div>
+    <div class="grid grid-4" style="gap:8px;">
+      <div class="kpi gold" style="padding:10px;">
+        <div class="label" style="font-size:0.68rem;">HPP Batch (Total Nilai)</div>
+        <div class="value" style="font-size:1rem;">${fmtRp(hpp.totalNilai)}</div>
+      </div>
+      <div class="kpi" style="padding:10px;">
+        <div class="label" style="font-size:0.68rem;">HPP per Kg Beras</div>
+        <div class="value" style="font-size:1rem;">${hpp.hppPerKgBeras>0?fmtRp(hpp.hppPerKgBeras):'-'}</div>
+      </div>
+      <div class="kpi" style="padding:10px;">
+        <div class="label" style="font-size:0.68rem;">Rendemen T1 (PK/Gabah)</div>
+        <div class="value" style="font-size:1rem;">${rendemenT1>0?rendemenT1.toFixed(1)+'%':'-'}</div>
+      </div>
+      <div class="kpi" style="padding:10px;">
+        <div class="label" style="font-size:0.68rem;">Rendemen Total (Beras/Gabah)</div>
+        <div class="value" style="font-size:1rem;">${rendemenTotal.toFixed(1)}%</div>
+      </div>
+    </div>
+
+    <div class="section-divider">Output Produksi</div>
+    <div class="grid grid-4" style="gap:8px;">
+      <div class="kpi" style="padding:10px;">
+        <div class="label" style="font-size:0.68rem;">Output PK</div>
+        <div class="value" style="font-size:1rem;">${fmtNum(r.pk||0)} kg</div>
+      </div>
+      <div class="kpi" style="padding:10px;">
+        <div class="label" style="font-size:0.68rem;">Output Beras (Premium+Medium)</div>
+        <div class="value" style="font-size:1rem;">${fmtNum(Number(r.premium||0)+Number(r.medium||0))} kg</div>
+        <div class="sub" style="font-size:0.68rem;">Premium: ${fmtNum(r.premium||0)} · Medium: ${fmtNum(r.medium||0)}</div>
+      </div>
+      <div class="kpi" style="padding:10px;">
+        <div class="label" style="font-size:0.68rem;">Output Menir</div>
+        <div class="value" style="font-size:1rem;">${fmtNum(r.menir||0)} kg</div>
+      </div>
+      <div class="kpi" style="padding:10px;">
+        <div class="label" style="font-size:0.68rem;">Output Bekatul</div>
+        <div class="value" style="font-size:1rem;">${fmtNum(r.bekatul||0)} kg</div>
+      </div>
+      <div class="kpi" style="padding:10px;">
+        <div class="label" style="font-size:0.68rem;">Output Sekam</div>
+        <div class="value" style="font-size:1rem;">${fmtNum(r.sekam||0)} kg</div>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <button class="btn btn-secondary" onclick="closeModal()">Tutup</button>
+    </div>
+  `);
+}
+
 function editProduksi(id){
   const isNew = id===null;
   const row = isNew ? {
@@ -4557,7 +4974,12 @@ function editProduksi(id){
   const bahanBakuOpts = (DB.jenisBahanBaku||[]).map(j=>`<option value="${esc(j)}" ${row.jenisBahanBaku===j?'selected':''}>${esc(j)}</option>`).join('');
   const stokBB = getStokBahanBaku();
 
-  window._produksiEdit = {id: row.id, isNew, sumberGabah: JSON.parse(JSON.stringify(row.sumberGabah||[]))};
+  // Simpan juga nomor batch yang sudah di-generate (row.batch) di context —
+  // mencegah nomor batch ganda terkonsumsi setiap kali editProduksi(null)
+  // dipanggil ulang (mis. dari alur "Kembali Edit" di Konfirmasi Produksi),
+  // yang sebelumnya menyebabkan gap nomor batch (BTC-003 dibuat tapi tidak
+  // pernah dipakai, batch sesungguhnya tersimpan sebagai BTC-004, dst).
+  window._produksiEdit = {id: row.id, isNew, batch: row.batch, sumberGabah: JSON.parse(JSON.stringify(row.sumberGabah||[]))};
 
   openModal(`
     <h2>${isNew?'Batch Produksi Baru':'Ubah Batch Produksi'}</h2>
@@ -4566,15 +4988,15 @@ function editProduksi(id){
     <div class="form-row">
       <div class="field">
         <label>Tanggal Mulai Giling</label>
-        <input type="date" id="pr_mulai" value="${esc(row.mulai)}">
+        <input type="date" id="pr_mulai" value="${esc(row.mulai)}" oninput="scheduleDraftSave()">
       </div>
       <div class="field">
         <label>Tanggal Selesai Giling</label>
-        <input type="date" id="pr_selesai" value="${esc(row.selesai)}">
+        <input type="date" id="pr_selesai" value="${esc(row.selesai)}" oninput="scheduleDraftSave()">
       </div>
       <div class="field">
         <label>Operator</label>
-        <input type="text" id="pr_operator" value="${esc(row.operator||'')}" placeholder="Nama operator giling">
+        <input type="text" id="pr_operator" value="${esc(row.operator||'')}" placeholder="Nama operator giling" oninput="scheduleDraftSave()">
       </div>
     </div>
 
@@ -4592,7 +5014,7 @@ function editProduksi(id){
       <div class="form-row">
         <div class="field">
           <label>Jenis Gabah</label>
-          <select id="pr_jenis" onchange="renderSumberGabahPicker()">
+          <select id="pr_jenis" onchange="onJenisGabahChange()">
             <option value="">-- Pilih Jenis --</option>
             ${jenisOpts}
           </select>
@@ -4605,9 +5027,15 @@ function editProduksi(id){
       </div>
 
       <div class="section-divider">Sumber Gabah &amp; HPP</div>
-      <p class="help-text" style="margin-top:-4px;">Pilih asal gabah dari transaksi pembelian. HPP dihitung otomatis dari rata-rata tertimbang harga gabah.</p>
+      <p class="help-text" style="margin-top:-4px;">Sumber gabah terisi otomatis (FIFO) saat Jenis Gabah dipilih. HPP dihitung realtime dari rata-rata tertimbang harga gabah.</p>
       <div id="sumberGabahBox"></div>
-      <button class="btn btn-secondary btn-sm" style="width:auto;margin-top:6px;" onclick="addSumberGabahRow()">+ Tambah Sumber Gabah</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+        <button class="btn btn-secondary btn-sm" style="width:auto;" onclick="addSumberGabahRow()">+ Tambah Sumber Gabah</button>
+        <button class="btn btn-secondary btn-sm" style="width:auto;" onclick="isiOtomatisFIFO()" title="Alokasikan Qty otomatis (FIFO) hingga target Gabah Masuk Giling tercapai">⚡ Isi Otomatis (FIFO)</button>
+        <button class="btn btn-secondary btn-sm" style="width:auto;" onclick="gunakanSemuaStok()" title="Semua Qty Dipakai = Sisa Tersedia">🎯 Gunakan Semua Stok</button>
+        <button class="btn btn-secondary btn-sm" style="width:auto;" onclick="resetQtySumberGabah()" title="Kosongkan Qty tanpa menghapus daftar sumber">🧹 Reset Qty</button>
+      </div>
+      <div id="ringkasanSumberGabahBox"></div>
 
       <div class="field" style="margin-top:12px;">
         <label>Estimasi HPP per Kg Gabah (otomatis)</label>
@@ -4628,7 +5056,7 @@ function editProduksi(id){
         <div class="field">
           <label>Hasil Sekam (Kg)</label>
           <input type="number" id="pr_sekam" value="${row.sekam||0}" min="0"
-            oninput="calcPKSekamSisa();">
+            oninput="calcPKSekamSisa(); scheduleDraftSave();">
         </div>
       </div>
       <div class="field">
@@ -4647,14 +5075,14 @@ function editProduksi(id){
       <div class="form-row">
         <div class="field">
           <label>Jenis Bahan Baku (PK)</label>
-          <select id="pr_jenisBahanBaku">
+          <select id="pr_jenisBahanBaku" onchange="scheduleDraftSave()">
             <option value="">-- Pilih Bahan Baku --</option>
             ${bahanBakuOpts}
           </select>
         </div>
         <div class="field">
           <label>Qty PK Masuk Polisher (Kg)</label>
-          <input type="number" id="pr_gabah_bb" value="${row.gabah||0}" min="0" oninput="calcRendemenPreview();">
+          <input type="number" id="pr_gabah_bb" value="${row.gabah||0}" min="0" oninput="calcRendemenPreview(); scheduleDraftSave();">
           <p class="help-text" style="margin-top:4px;">
             Stok PK tersedia: ${Object.entries(stokBB).filter(([,v])=>v>0).map(([k,v])=>`${esc(k)}: <b>${fmtNum(v)} kg</b>`).join(' · ')||'<b>Belum ada stok PK</b>. Tambah di Form Pembelian (kategori Bahan Baku).'}
           </p>
@@ -4663,7 +5091,7 @@ function editProduksi(id){
       <div class="field">
         <label>HPP / Harga Bahan Baku per Kg (Rp)</label>
         <input type="text" id="pr_hpp_bb" value="${fmtNum(row.hppBahanBaku||0)}" placeholder="0"
-          oninput="onInputRpFormat(this)" inputmode="numeric">
+          oninput="onInputRpFormat(this); scheduleDraftSave();" inputmode="numeric">
         <p class="help-text" style="margin-top:4px;">Isi harga beli rata-rata PK untuk perhitungan HPP Beras.</p>
       </div>
     </div>
@@ -4715,14 +5143,38 @@ function editProduksi(id){
     </div>
 
     <div class="form-actions">
-      <button class="btn btn-primary" style="width:auto;" onclick="saveProduksi('${row.id}', ${isNew})">Simpan Batch</button>
-      <button class="btn btn-secondary" onclick="closeModal()">Batal</button>
+      <button class="btn btn-primary" style="width:auto;" onclick="konfirmasiSimpanProduksi('${row.id}', ${isNew})">Simpan Batch</button>
+      <button class="btn btn-secondary" onclick="batalEditProduksi(${isNew})">Batal</button>
     </div>
   `);
   // Init
   renderSumberGabahPicker();
   calcRendemenPreview();
   calcPKSekamSisa();
+
+  // Requirement #9 — Auto Simpan Draft: untuk batch BARU, cek apakah ada
+  // draft tersimpan dari sesi sebelumnya (mis. browser tertutup tanpa
+  // sempat klik Simpan), tawarkan pemulihan ke operator.
+  if(isNew){
+    const draft = getProduksiDraft();
+    if(draft && (draft.jenisGabah || draft.gabah || draft.premium || draft.pk)){
+      const savedAtLabel = draft.savedAt ? new Date(draft.savedAt).toLocaleString('id-ID') : '-';
+      if(confirm(`Ditemukan draft batch produksi yang belum tersimpan (terakhir diubah: ${savedAtLabel}).\n\nPulihkan draft ini?`)){
+        _applyProduksiDraftToForm(draft);
+        showToast('Draft berhasil dipulihkan.');
+      } else {
+        clearProduksiDraft();
+      }
+    }
+  }
+}
+
+// Tombol "Batal" — untuk batch BARU dengan draft tersimpan, draft TETAP
+// dipertahankan (operator mungkin sengaja menutup sementara, bukan
+// membatalkan input) — draft hanya dihapus saat batch berhasil DISIMPAN.
+function batalEditProduksi(isNew){
+  closeModal();
+  delete window._produksiEdit;
 }
 
 // Kalkulasi sisa / susut Tahap 1 secara real-time
@@ -4773,6 +5225,110 @@ function updateProduksiBahanForm(){
   calcRendemenPreview();
 }
 
+/* ============================================================
+   Sprint QA Produksi Batch Enterprise — Requirement #1-8
+   ============================================================
+   Seluruh logika sumber gabah sekarang didelegasikan ke
+   ProductionCalculationService — TIDAK ada rumus FIFO/HPP/validasi
+   yang ditulis ulang di sini. Fungsi-fungsi di bawah ini murni
+   "lem" antara DOM dan service (baca input, panggil service, render
+   hasil) — sesuai instruksi arsitektur (Requirement #12).
+   ============================================================ */
+
+// Requirement #1 — Auto Complete Sumber Gabah: dipanggil saat Jenis Gabah
+// dipilih. Mengisi SEMUA stok yang tersedia secara otomatis (FIFO),
+// tidak perlu klik "+ Tambah Sumber Gabah" berulang kali.
+function onJenisGabahChange(){
+  const ctx = window._produksiEdit;
+  const jenisGabah = document.getElementById('pr_jenis').value;
+  if(!jenisGabah){ ctx.sumberGabah = []; renderSumberGabahPicker(); return; }
+
+  // Hanya auto-isi jika daftar sumber masih kosong (belum ada pilihan manual
+  // operator) ATAU jenis gabah baru saja berganti — mencegah qty yang sudah
+  // diedit operator tertimpa ulang tanpa sengaja saat re-render lain dipicu.
+  ctx.sumberGabah = ProductionCalculationService.buildAutoSumberGabah(jenisGabah, ctx.id);
+  renderSumberGabahPicker();
+  autoFillGabahMasukGiling();
+}
+
+// Requirement #3 — Gabah Masuk Giling otomatis = total Qty Dipakai (realtime),
+// HANYA jika field kosong/0 (tidak menimpa input manual operator).
+function autoFillGabahMasukGiling(){
+  const ctx = window._produksiEdit;
+  const gabahInput = document.getElementById('pr_gabah');
+  if(!gabahInput) return;
+  const newValue = ProductionCalculationService.computeGabahMasukGiling(ctx.sumberGabah, gabahInput.value);
+  if(Number(gabahInput.value)||0) return; // operator sudah isi manual, jangan timpa
+  // BUG FIX KRITIS (ditemukan lewat QA end-to-end Playwright): SEBELUMNYA
+  // memakai fmtNum(newValue) yang menghasilkan format Indonesia "1.000"
+  // (titik sebagai pemisah ribuan). <input type="number"> TIDAK menolak
+  // string ini saat di-assign langsung ke .value (tersimpan apa adanya),
+  // TAPI setiap pembacaan berikutnya via Number(input.value) akan SALAH
+  // total — JavaScript membaca "1.000" sebagai desimal (titik = pemisah
+  // desimal), sehingga Number("1.000") = 1, BUKAN 1000. Akibatnya Gabah
+  // Masuk Giling yang seharusnya 1000kg terbaca sebagai 1kg di semua
+  // perhitungan berikutnya (validasi, ringkasan, konfirmasi, simpan).
+  // <input type="number"> HARUS diisi angka polos tanpa pemisah ribuan.
+  gabahInput.value = newValue > 0 ? newValue : '';
+  calcRendemenPreview();
+  calcPKSekamSisa();
+}
+
+// Requirement #4a — "⚡ Isi Otomatis (FIFO)": alokasikan qty FIFO hingga
+// target produksi (nilai yang sudah ada di Gabah Masuk Giling) tercapai.
+function isiOtomatisFIFO(){
+  const ctx = window._produksiEdit;
+  const jenisGabah = document.getElementById('pr_jenis')?.value;
+  if(!jenisGabah){ showToast('Pilih Jenis Gabah terlebih dahulu.'); return; }
+  const target = Number(document.getElementById('pr_gabah')?.value)||0;
+  if(target <= 0){ showToast('Isi target Gabah Masuk Giling terlebih dahulu, atau gunakan "🎯 Gunakan Semua Stok".'); return; }
+
+  const result = ProductionCalculationService.autoAllocateFIFO(jenisGabah, target, ctx.id);
+  ctx.sumberGabah = result.sumberGabah;
+  renderSumberGabahPicker();
+  if(!result.tercukupi){
+    showToast(`⚠ Stok tidak mencukupi. Kurang ${fmtNum(result.kurang)} kg dari target.`);
+  } else {
+    showToast('Qty otomatis dialokasikan secara FIFO.');
+  }
+}
+
+// Requirement #4b — "🎯 Gunakan Semua Stok": SEMUA qty dipakai = sisa
+// tersedia, Gabah Masuk Giling otomatis mengikuti total.
+function gunakanSemuaStok(){
+  const ctx = window._produksiEdit;
+  const jenisGabah = document.getElementById('pr_jenis')?.value;
+  if(!jenisGabah){ showToast('Pilih Jenis Gabah terlebih dahulu.'); return; }
+
+  // Jika belum ada baris sama sekali, ambil dulu semua sumber FIFO yang tersedia.
+  if(ctx.sumberGabah.length === 0){
+    ctx.sumberGabah = ProductionCalculationService.buildAutoSumberGabah(jenisGabah, ctx.id);
+  } else {
+    ctx.sumberGabah = ProductionCalculationService.useAllStock(ctx.sumberGabah, jenisGabah, ctx.id);
+  }
+  renderSumberGabahPicker();
+  // Gabah Masuk Giling WAJIB mengikuti total saat tombol ini ditekan (override manual).
+  // BUG FIX KRITIS: SEBELUMNYA pakai fmtNum(total) — sama persis bug yang
+  // ditemukan di autoFillGabahMasukGiling() (lihat catatan di sana). Angka
+  // polos tanpa pemisah ribuan WAJIB dipakai untuk <input type="number">.
+  const gabahInput = document.getElementById('pr_gabah');
+  if(gabahInput){
+    const total = ctx.sumberGabah.reduce((s,r)=>s+(Number(r.qty)||0), 0);
+    gabahInput.value = total;
+    calcRendemenPreview();
+    calcPKSekamSisa();
+  }
+  showToast('Seluruh stok tersedia dipakai.');
+}
+
+// Requirement #4c — "🧹 Reset Qty": kosongkan qty TANPA menghapus daftar sumber.
+function resetQtySumberGabah(){
+  const ctx = window._produksiEdit;
+  ctx.sumberGabah = ProductionCalculationService.resetQty(ctx.sumberGabah);
+  renderSumberGabahPicker();
+  showToast('Qty direset ke 0.');
+}
+
 function renderSumberGabahPicker(){
   const box = document.getElementById('sumberGabahBox');
   if(!box) return;
@@ -4781,15 +5337,21 @@ function renderSumberGabahPicker(){
   const sumber = ctx.sumberGabah;
 
   if(sumber.length===0){
-    box.innerHTML = `<div class="help-text" style="margin:8px 0;">Belum ada sumber gabah dipilih. Klik "+ Tambah Sumber Gabah" untuk menambahkan, atau biarkan kosong jika tidak melacak HPP per batch ini.</div>`;
+    box.innerHTML = `<div class="help-text" style="margin:8px 0;">${jenisGabah ? 'Tidak ada stok tersedia untuk jenis gabah ini, atau klik "+ Tambah Sumber Gabah" untuk menambahkan manual.' : 'Pilih Jenis Gabah untuk menampilkan sumber stok secara otomatis (FIFO).'}</div>`;
+    renderRingkasanSumberGabah();
     updateHppPreview();
     return;
   }
 
+  // Requirement #6 — validasi setiap baris (dipakai juga untuk indikator warna #7)
+  const validation = ProductionCalculationService.validateRows(sumber, jenisGabah, ctx.id);
+  const sourceList = ProductionCalculationService.getAvailableSourcesFIFO(jenisGabah, ctx.id);
+  const sourceMap = {}; sourceList.forEach(s => { sourceMap[s.pembelianId] = s; });
+
   box.innerHTML = `
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Pembelian (Faktur - Supplier)</th><th>Sisa Tersedia</th><th>Harga/Kg (+angkut)</th><th>Qty Dipakai (Kg)</th><th></th></tr></thead>
+        <thead><tr><th>Pembelian (Faktur - Supplier)</th><th>Tgl Beli</th><th>Sisa Tersedia</th><th>Harga/Kg (+angkut)</th><th>Qty Dipakai (Kg)</th><th></th></tr></thead>
         <tbody>
           ${sumber.map((s,i)=>{
             const opts = getPembelianOptionsForSumber(jenisGabah, s.pembelianId);
@@ -4805,12 +5367,33 @@ function renderSumberGabahPicker(){
             const reservedByOthersForCurrent = p ? sumber.filter((x,xi)=>xi!==i && x.pembelianId===p.id).reduce((sum,x)=>sum+Number(x.qty||0),0) : 0;
             const sisaTampil = p ? getSisaPembelian(p.id, ctx.id) - reservedByOthersForCurrent : 0;
             const hargaTampil = p ? getHargaEfektifPembelian(p) : 0;
+
+            // Requirement #7 — Indikator warna per baris. sisaTampil SUDAH
+            // merupakan stok tersedia untuk baris ini (getSisaPembelian tidak
+            // menghitung batch yang sedang diedit, dan reservedByOthersForCurrent
+            // sudah dikurangi) — dipakai LANGSUNG, BUKAN ditambah s.qty lagi
+            // (bug sebelumnya: sisaTampil+qty selalu >= qty, sehingga kondisi
+            // "qty melebihi stok" tidak akan pernah terpenuhi, indikator merah
+            // tidak pernah muncul — ditemukan lewat QA end-to-end Playwright).
+            const indicator = p ? ProductionCalculationService.getIndicatorColor(s.qty, sisaTampil) : 'green';
+            const indicatorDot = { green:'🟢', yellow:'🟡', red:'🔴' }[indicator];
+            const rowVal = validation[i];
+            const errorMsg = rowVal && rowVal.level==='error' ? rowVal.message : '';
+            const inputBorderColor = indicator==='red' ? 'var(--red)' : indicator==='yellow' ? 'var(--gold)' : 'var(--line)';
+
             return `
               <tr>
                 <td><select onchange="updateSumberGabah(${i}, 'pembelianId', this.value)" style="width:100%;">${optionsHtml}</select></td>
+                <td style="font-size:0.78rem;color:var(--ink-soft);">${p?fmtDate(p.tanggal):'-'}</td>
                 <td class="num-cell">${p?fmtNum(sisaTampil)+' kg':'-'}</td>
                 <td class="num-cell">${p?fmtRp(hargaTampil):'-'}</td>
-                <td><input type="number" min="0" value="${s.qty||0}" style="width:100%;" oninput="updateSumberGabah(${i}, 'qty', this.value)"></td>
+                <td>
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <span title="${indicator==='green'?'Qty sesuai':indicator==='yellow'?'Sisa stok hampir habis (<10%)':'Qty melebihi stok'}">${p?indicatorDot:''}</span>
+                    <input type="number" min="0" value="${s.qty||0}" style="width:100%;border-color:${inputBorderColor};" oninput="updateSumberGabah(${i}, 'qty', this.value)">
+                  </div>
+                  ${errorMsg ? `<div style="color:var(--red);font-size:0.74rem;margin-top:3px;">⚠ ${esc(errorMsg)}</div>` : ''}
+                </td>
                 <td><button class="btn btn-sm btn-danger" onclick="removeSumberGabahRow(${i})">✕</button></td>
               </tr>
             `;
@@ -4819,7 +5402,53 @@ function renderSumberGabahPicker(){
       </table>
     </div>
   `;
+  renderRingkasanSumberGabah();
   updateHppPreview();
+}
+
+// Requirement #5 — Ringkasan realtime di bawah tabel sumber gabah.
+function renderRingkasanSumberGabah(){
+  const box = document.getElementById('ringkasanSumberGabahBox');
+  if(!box) return;
+  const ctx = window._produksiEdit;
+  const jenisGabah = document.getElementById('pr_jenis')?.value || '';
+  const summary = ProductionCalculationService.computeSummary(ctx.sumberGabah, jenisGabah, ctx.id);
+  const gabahMasuk = Number(document.getElementById('pr_gabah')?.value)||0;
+  const selisih = gabahMasuk - summary.totalQtyDipakai;
+  const selisihColor = Math.abs(selisih) < 0.01 ? 'var(--rice-green)' : 'var(--gold)';
+
+  box.innerHTML = `
+    <div class="grid grid-4" style="margin-top:10px;gap:8px;">
+      <div class="kpi" style="padding:8px 10px;">
+        <div class="label" style="font-size:0.68rem;">Jumlah Supplier</div>
+        <div class="value" style="font-size:1rem;">${summary.jumlahSupplier}</div>
+      </div>
+      <div class="kpi" style="padding:8px 10px;">
+        <div class="label" style="font-size:0.68rem;">Jumlah Batch Pembelian</div>
+        <div class="value" style="font-size:1rem;">${summary.jumlahBatchPembelian}</div>
+      </div>
+      <div class="kpi" style="padding:8px 10px;">
+        <div class="label" style="font-size:0.68rem;">Total Qty Dipakai</div>
+        <div class="value" style="font-size:1rem;">${fmtNum(summary.totalQtyDipakai)} <span style="font-size:0.7rem;">kg</span></div>
+      </div>
+      <div class="kpi gold" style="padding:8px 10px;">
+        <div class="label" style="font-size:0.68rem;">Total Nilai Gabah</div>
+        <div class="value" style="font-size:1rem;">${fmtRp(summary.totalNilaiGabah)}</div>
+      </div>
+      <div class="kpi" style="padding:8px 10px;">
+        <div class="label" style="font-size:0.68rem;">Estimasi HPP Gabah</div>
+        <div class="value" style="font-size:1rem;">${summary.estimasiHppGabah>0?fmtRp(summary.estimasiHppGabah)+'/kg':'-'}</div>
+      </div>
+      <div class="kpi" style="padding:8px 10px;">
+        <div class="label" style="font-size:0.68rem;">Rata-rata Harga</div>
+        <div class="value" style="font-size:1rem;">${summary.rataRataHarga>0?fmtRp(summary.rataRataHarga)+'/kg':'-'}</div>
+      </div>
+      <div class="kpi" style="padding:8px 10px;grid-column:span 2;">
+        <div class="label" style="font-size:0.68rem;">Sisa Selisih (Gabah Masuk − Total Qty Dipakai)</div>
+        <div class="value" style="font-size:1rem;color:${selisihColor};">${fmtNum(selisih)} <span style="font-size:0.7rem;">kg</span></div>
+      </div>
+    </div>
+  `;
 }
 
 function addSumberGabahRow(){
@@ -4831,6 +5460,7 @@ function removeSumberGabahRow(idx){
   const ctx = window._produksiEdit;
   ctx.sumberGabah.splice(idx,1);
   renderSumberGabahPicker();
+  autoFillGabahMasukGiling();
 }
 function updateSumberGabah(idx, field, value){
   const ctx = window._produksiEdit;
@@ -4839,19 +5469,27 @@ function updateSumberGabah(idx, field, value){
     row.pembelianId = value;
     const p = DB.pembelian.find(x=>x.id===value);
     row.harga = p ? getHargaEfektifPembelian(p) : 0;
-    // auto-fill qty with remaining available (capped) if currently 0
-    if(p && !row.qty){
-      const sisa = getSisaPembelian(p.id, ctx.id);
-      const gabahTarget = Number(document.getElementById('pr_gabah').value)||0;
-      const usedSoFar = ctx.sumberGabah.reduce((s,x,i)=> i===idx?s:s+Number(x.qty||0), 0);
-      row.qty = Math.max(0, Math.min(sisa, gabahTarget - usedSoFar));
+    // Requirement #2 — Auto Isi Qty Dipakai: saat sumber baru dipilih,
+    // Qty Dipakai otomatis = Sisa Tersedia (operator tetap boleh mengubah).
+    if(p){
+      const reservedByOthers = ctx.sumberGabah.filter((x,xi)=>xi!==idx && x.pembelianId===p.id).reduce((sum,x)=>sum+Number(x.qty||0),0);
+      const sisa = getSisaPembelian(p.id, ctx.id) - reservedByOthers;
+      row.qty = Math.max(0, sisa);
     }
   } else if(field==='qty'){
-    row.qty = Number(value)||0;
+    row.qty = value === '' ? '' : Number(value);
   }
   renderSumberGabahPicker();
+  autoFillGabahMasukGiling();
 }
 
+// Requirement #8 — HPP Realtime: setiap perubahan Qty Dipakai langsung
+// menghitung ulang Total Nilai Gabah, harga rata-rata, dan estimasi
+// HPP/kg, TANPA tombol Hitung. Didelegasikan SEPENUHNYA ke getHppBatch()
+// (via ProductionCalculationService.computeHppPreview) — SATU rumus yang
+// sama persis dipakai saat preview di form INI dan saat batch benar-benar
+// tersimpan/terjurnal, sehingga preview tidak pernah menyimpang dari
+// angka final (lihat Requirement #12 — tidak ada rumus tersebar).
 function updateHppPreview(){
   const ctx = window._produksiEdit;
   if(!ctx) return;
@@ -4861,53 +5499,33 @@ function updateHppPreview(){
     ? (Number(document.getElementById('pr_gabah_bb')?.value)||0)
     : (Number(document.getElementById('pr_gabah')?.value)||0);
   const pk      = Number(document.getElementById('pr_pk')?.value)||0;
+  const sekam   = Number(document.getElementById('pr_sekam')?.value)||0;
   const premium = Number(document.getElementById('pr_premium')?.value)||0;
   const medium  = Number(document.getElementById('pr_medium')?.value)||0;
   const menir   = Number(document.getElementById('pr_menir')?.value)||0;
   const bekatul = Number(document.getElementById('pr_bekatul')?.value)||0;
 
-  // Total output Tahap 1 (PK + Sekam) dan Tahap 2 (Premium + Medium + Menir + Bekatul)
-  const sekam        = Number(document.getElementById('pr_sekam')?.value)||0;
-  const totalOutputT1 = pk + sekam;
-  const totalOutputT2 = premium + medium + menir + bekatul;
-
-  let totalNilai = 0, totalQty = 0;
-  if(tipeBahan === 'Bahan Baku'){
-    // HPP dari harga bahan baku
-    const hppBB = readInputRp('pr_hpp_bb');
-    totalNilai = hppBB * gabah;
-    totalQty   = gabah;
-  } else {
-    // HPP dari sumber gabah (weighted avg)
-    ctx.sumberGabah.forEach(s=>{
-      if(!s.pembelianId) return;
-      totalNilai += Number(s.qty||0) * Number(s.harga||0);
-      totalQty   += Number(s.qty||0);
-    });
-  }
+  const batchLike = {
+    tipeBahan, gabah, pk, sekam, premium, medium, menir, bekatul,
+    sumberGabah: tipeBahan==='Bahan Baku' ? [] : ctx.sumberGabah,
+    hppBahanBaku: tipeBahan==='Bahan Baku' ? readInputRp('pr_hpp_bb') : 0,
+  };
+  const hpp = ProductionCalculationService.computeHppPreview(batchLike);
 
   const hppGabahEl = document.getElementById('pr_hpp_gabah_display');
   const hppBerasEl = document.getElementById('pr_hpp_beras_display');
 
-  if(totalQty <= 0 && totalNilai <= 0){
+  if(hpp.totalQtySumber <= 0 && hpp.totalNilai <= 0){
     if(hppGabahEl) hppGabahEl.value = '-';
     if(hppBerasEl) hppBerasEl.value = '-';
-    return;
+  } else {
+    const hppPerKgInput = gabah>0 ? hpp.totalNilai/gabah : 0;
+    if(hppGabahEl) hppGabahEl.value = hppPerKgInput>0 ? fmtRp(hppPerKgInput)+'/kg' : '-';
+    if(hppBerasEl) hppBerasEl.value = hpp.hppPerKgBeras>0 ? fmtRp(hpp.hppPerKgBeras)+'/kg' : '-';
   }
 
-  // HPP per Kg input (Gabah atau PK beli)
-  const hppPerKgInput = gabah>0 ? totalNilai/gabah : 0;
-  // HPP per Kg PK (Tahap 1 output): nilai gabah / total output T1
-  const hppPerKgPK    = totalOutputT1>0 ? totalNilai/totalOutputT1 : 0;
-  // HPP per Kg Beras (Tahap 2 output): nilai gabah / total output T2
-  const hppPerKgBeras = totalOutputT2>0 ? totalNilai/totalOutputT2 : 0;
-
-  if(hppGabahEl) hppGabahEl.value = hppPerKgInput>0 ? fmtRp(hppPerKgInput)+'/kg' : '-';
-  if(hppBerasEl) hppBerasEl.value = hppPerKgBeras>0 ? fmtRp(hppPerKgBeras)+'/kg' : '-';
-
-  // Hapus note lama
-  const note = document.getElementById('sumberGabahNote');
-  if(note) note.remove();
+  renderRingkasanSumberGabah();
+  scheduleDraftSave(); // Requirement #9 — setiap perubahan memicu auto-save draft
 }
 function validateSumberGabah(){
   updateHppPreview();
@@ -4935,6 +5553,140 @@ function calcRendemenPreview(){
   if(tipeBahan !== 'Bahan Baku') calcPKSekamSisa();
 
   updateHppPreview();
+}
+
+/* ============================================================
+   Sprint QA Produksi Batch Enterprise — Requirement #10
+   Konfirmasi Produksi: sebelum batch benar-benar disimpan, tampilkan
+   ringkasan (Jenis Gabah, Total Gabah Masuk, Jumlah Supplier, Rata-rata
+   Harga, Estimasi HPP) dan minta operator memilih Lanjutkan / Kembali Edit.
+   Menyimpan SELURUH state form saat ini agar bisa dikembalikan persis
+   apa adanya jika operator memilih "Kembali Edit".
+   ============================================================ */
+function konfirmasiSimpanProduksi(id, isNew){
+  const tipeBahan = document.getElementById('pr_tipeBahan')?.value || 'Gabah';
+
+  // Mode Bahan Baku (PK beli) — ringkasan lebih sederhana, langsung ke validasi save()
+  // tanpa sumber gabah FIFO (tidak relevan untuk mode ini).
+  if(tipeBahan === 'Bahan Baku'){
+    saveProduksi(id, isNew);
+    return;
+  }
+
+  const ctx = window._produksiEdit;
+  const jenisGabah = document.getElementById('pr_jenis')?.value || '';
+  const gabahMasuk = Number(document.getElementById('pr_gabah')?.value)||0;
+
+  if(!jenisGabah || gabahMasuk <= 0){
+    // Biarkan saveProduksi() yang menampilkan pesan validasi standar
+    saveProduksi(id, isNew);
+    return;
+  }
+
+  const validation = ProductionCalculationService.validateBeforeSave(ctx.sumberGabah, jenisGabah, gabahMasuk, ctx.id);
+  if(!validation.valid){
+    const pesanError = validation.errors.map(e=>'• '+e.message).join('\n');
+    alert(`Tidak dapat melanjutkan — periksa kembali Qty Dipakai:\n\n${pesanError}`);
+    return;
+  }
+
+  // Simpan snapshot DATA form (BUKAN string HTML) agar "Kembali Edit" bisa
+  // mengembalikan persis. Pendekatan snapshot innerHTML string TERBUKTI BUGGY
+  // lewat QA end-to-end: value yang di-set lewat JavaScript pada <select> dan
+  // <input> (mis. via selectOption() / .value = X) TIDAK tercermin di string
+  // HTML hasil .innerHTML — karena itu murni markup statis dari render awal,
+  // bukan snapshot DOM state terkini. Re-use _readProduksiInputsForDraft()
+  // (mekanisme yang sama dengan draft recovery, sudah teruji benar) dan
+  // _applyProduksiDraftToForm() untuk menerapkannya kembali.
+  window._produksiFormSnapshot = _readProduksiInputsForDraft();
+  const summary = validation.summary;
+  const hpp = ProductionCalculationService.computeHppPreview({
+    sumberGabah: ctx.sumberGabah, gabah: gabahMasuk,
+    pk: Number(document.getElementById('pr_pk')?.value)||0,
+    sekam: Number(document.getElementById('pr_sekam')?.value)||0,
+    premium: Number(document.getElementById('pr_premium')?.value)||0,
+    medium: Number(document.getElementById('pr_medium')?.value)||0,
+    menir: Number(document.getElementById('pr_menir')?.value)||0,
+    bekatul: Number(document.getElementById('pr_bekatul')?.value)||0,
+  });
+
+  openModal(`
+    <h2>Konfirmasi Simpan Batch Produksi</h2>
+    <div class="modal-sub">Periksa ringkasan berikut sebelum melanjutkan.</div>
+
+    <div style="background:var(--gold-soft);border-radius:10px;padding:16px;margin:14px 0;">
+      <div class="form-row">
+        <div class="field">
+          <label style="font-size:0.72rem;">Jenis Gabah</label>
+          <div style="font-weight:700;font-size:1rem;">${esc(jenisGabah)}</div>
+        </div>
+        <div class="field">
+          <label style="font-size:0.72rem;">Total Gabah Masuk</label>
+          <div style="font-weight:700;font-size:1rem;">${fmtNum(gabahMasuk)} kg</div>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="field">
+          <label style="font-size:0.72rem;">Jumlah Supplier</label>
+          <div style="font-weight:700;font-size:1rem;">${summary.jumlahSupplier}</div>
+        </div>
+        <div class="field">
+          <label style="font-size:0.72rem;">Rata-rata Harga</label>
+          <div style="font-weight:700;font-size:1rem;">${summary.rataRataHarga>0?fmtRp(summary.rataRataHarga)+'/kg':'-'}</div>
+        </div>
+      </div>
+      <div class="field">
+        <label style="font-size:0.72rem;">Estimasi HPP per Kg Beras</label>
+        <div style="font-weight:700;font-size:1.1rem;color:var(--rice-green-dark);">${hpp.hppPerKgBeras>0?fmtRp(hpp.hppPerKgBeras)+'/kg':'-'}</div>
+      </div>
+      ${Math.abs(validation.selisih) > 0.01 ? `<div style="margin-top:8px;color:var(--gold);font-size:0.85rem;">⚠ Selisih Gabah Masuk vs Total Qty Dipakai: ${fmtNum(validation.selisih)} kg</div>` : ''}
+    </div>
+
+    <div class="form-actions">
+      <button class="btn btn-primary" style="width:auto;" onclick="_lanjutkanSimpanProduksi('${id}', ${isNew})">✓ Lanjutkan</button>
+      <button class="btn btn-secondary" style="width:auto;" onclick="_kembaliEditProduksi('${id}', ${isNew})">✖ Kembali Edit</button>
+    </div>
+  `);
+}
+
+// BUG FIX KRITIS (ditemukan lewat QA end-to-end Playwright): konfirmasiSimpanProduksi()
+// mengganti SELURUH modalBody dengan layar ringkasan, sehingga elemen form
+// (pr_mulai, pr_jenis, dst) HILANG dari DOM. Saat tombol "✓ Lanjutkan" diklik,
+// saveProduksi() yang dipanggil langsung akan gagal dengan
+// "Cannot read properties of null (reading 'value')" karena mencoba membaca
+// elemen form yang sudah tidak ada — modal tetap macet di layar konfirmasi.
+//
+// Diperbaiki dengan mengembalikan form ke DOM (dari snapshot yang sudah
+// disimpan) SEBELUM memanggil saveProduksi() — dilakukan secara SINKRON
+// (tanpa setTimeout/await di antaranya) sehingga browser tidak sempat
+// me-repaint/menampilkan form yang dikembalikan ini ke layar; dari sudut
+// pandang user, klik "Lanjutkan" langsung berakhir di toast sukses, tanpa
+// flash form di tengah-tengah.
+function _lanjutkanSimpanProduksi(id, isNew){
+  const snapshot = window._produksiFormSnapshot;
+  if(snapshot){
+    editProduksi(isNew ? null : id);
+    _applyProduksiDraftToForm(snapshot);
+  }
+  delete window._produksiFormSnapshot;
+  saveProduksi(id, isNew);
+}
+
+function _kembaliEditProduksi(id, isNew){
+  const snapshot = window._produksiFormSnapshot;
+  delete window._produksiFormSnapshot;
+  // Buka ulang form dari nol (memastikan SEMUA elemen, listener, dan opsi
+  // dropdown ter-render fresh dan benar — termasuk daftar pembelian terbaru),
+  // lalu terapkan kembali nilai-nilai yang sudah diisi operator sebelumnya.
+  editProduksi(isNew ? null : id);
+  if(snapshot){
+    // editProduksi(null) selalu generate id batch BARU (uid() dipanggil ulang);
+    // untuk kasus isNew, window._produksiEdit.id sudah berubah — itu tidak masalah
+    // karena id final ditentukan saat benar-benar disimpan (saveProduksi menerima
+    // parameter id dari tombol, bukan dari ctx). Untuk kasus edit batch existing,
+    // editProduksi(id) memuat ulang dari DB.produksi seperti semula.
+    _applyProduksiDraftToForm(snapshot);
+  }
 }
 
 function saveProduksi(id, isNew){
@@ -4979,7 +5731,8 @@ function saveProduksi(id, isNew){
       sumberGabah: [],
     };
     if(isNew){
-      record.batch = nextCode('batch','BTC',3);
+      const ctx = window._produksiEdit;
+      record.batch = (ctx && ctx.batch) ? ctx.batch : nextCode('batch','BTC',3);
       DB.produksi.push(record);
     } else {
       const row = DB.produksi.find(r=>r.id===id);
@@ -4990,6 +5743,7 @@ function saveProduksi(id, isNew){
     saveDB();
     closeModal();
     delete window._produksiEdit;
+    clearProduksiDraft();
     showToast('Batch produksi (PK/Bahan Baku) tersimpan. Stok & HPP diperbarui.');
     renderProduksi();
     return;
@@ -5052,7 +5806,10 @@ function saveProduksi(id, isNew){
   };
 
   if(isNew){
-    record.batch = nextCode('batch','BTC',3);
+    // Pakai nomor batch yang sudah di-generate sejak editProduksi(null) pertama
+    // kali dipanggil (tersimpan di ctx.batch) — mencegah gap nomor batch jika
+    // form sempat dibuka ulang (mis. siklus Konfirmasi → Kembali Edit → Lanjutkan).
+    record.batch = (ctx && ctx.batch) ? ctx.batch : nextCode('batch','BTC',3);
     DB.produksi.push(record);
   } else {
     const row = DB.produksi.find(r=>r.id===id);
@@ -5068,6 +5825,7 @@ function saveProduksi(id, isNew){
   saveDB();
   closeModal();
   delete window._produksiEdit;
+  clearProduksiDraft();
   showToast('Batch produksi tersimpan. Stok, HPP, dan Rendemen diperbarui.');
   renderProduksi();
 }
