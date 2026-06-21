@@ -4979,7 +4979,14 @@ function editProduksi(id){
   // dipanggil ulang (mis. dari alur "Kembali Edit" di Konfirmasi Produksi),
   // yang sebelumnya menyebabkan gap nomor batch (BTC-003 dibuat tapi tidak
   // pernah dipakai, batch sesungguhnya tersimpan sebagai BTC-004, dst).
-  window._produksiEdit = {id: row.id, isNew, batch: row.batch, sumberGabah: JSON.parse(JSON.stringify(row.sumberGabah||[]))};
+  // BUG-007 FIX: flag gabahManualSet membedakan SECARA EKSPLISIT antara nilai
+  // pr_gabah yang diisi MANUAL oleh operator (mengetik langsung di field itu)
+  // vs nilai yang di-AUTO-FILL oleh sistem (dari Total Qty Dipakai sumber gabah).
+  // Sebelumnya kedua kondisi ini tidak bisa dibedakan (keduanya sama-sama
+  // mengubah .value), sehingga begitu field terisi SEKALI oleh sistem sendiri,
+  // auto-update lanjutan terblokir permanen — Gabah Masuk Giling tidak lagi
+  // mengikuti Total Qty walau operator tidak pernah mengetik manual di sana.
+  window._produksiEdit = {id: row.id, isNew, batch: row.batch, gabahManualSet: Number(row.gabah||0) > 0 && (row.sumberGabah||[]).length === 0, sumberGabah: JSON.parse(JSON.stringify(row.sumberGabah||[]))};
 
   openModal(`
     <h2>${isNew?'Batch Produksi Baru':'Ubah Batch Produksi'}</h2>
@@ -5022,7 +5029,7 @@ function editProduksi(id){
         <div class="field">
           <label>Gabah Masuk Giling (Kg) — Input Tahap 1</label>
           <input type="number" id="pr_gabah" value="${row.gabah||0}" min="0"
-            oninput="calcRendemenPreview(); validateSumberGabah(); calcPKSekamSisa();">
+            oninput="_markGabahManualInput(); calcRendemenPreview(); validateSumberGabah(); calcPKSekamSisa();">
         </div>
       </div>
 
@@ -5253,12 +5260,29 @@ function onJenisGabahChange(){
 
 // Requirement #3 — Gabah Masuk Giling otomatis = total Qty Dipakai (realtime),
 // HANYA jika field kosong/0 (tidak menimpa input manual operator).
+function _markGabahManualInput(){
+  const ctx = window._produksiEdit;
+  if(ctx) ctx.gabahManualSet = true;
+}
+
 function autoFillGabahMasukGiling(){
   const ctx = window._produksiEdit;
   const gabahInput = document.getElementById('pr_gabah');
   if(!gabahInput) return;
-  const newValue = ProductionCalculationService.computeGabahMasukGiling(ctx.sumberGabah, gabahInput.value);
-  if(Number(gabahInput.value)||0) return; // operator sudah isi manual, jangan timpa
+  // BUG-007 FIX: SEBELUMNYA dicek dengan `if(Number(gabahInput.value)||0) return;`
+  // — begitu field terisi APAPUN (termasuk hasil auto-fill sistem sendiri di
+  // pemanggilan sebelumnya), kondisi ini SELALU true, sehingga auto-update
+  // lanjutan dari Total Qty Dipakai terblokir PERMANEN. Akibatnya: pilih Jenis
+  // Gabah (auto-fill gabah=1000) -> ubah Qty Dipakai jadi 600 -> Gabah Masuk
+  // Giling TETAP 1000, tidak pernah ikut 600, padahal field itu tidak pernah
+  // diisi manual oleh operator sama sekali.
+  // Diperbaiki memakai flag eksplisit ctx.gabahManualSet — HANYA true jika
+  // operator benar-benar mengetik di field pr_gabah itu sendiri (lihat
+  // _markGabahManualInput(), dipasang di oninput field tsb). Assignment
+  // .value oleh sistem (baris di bawah, dan gunakanSemuaStok()) TIDAK memicu
+  // event 'input' DOM, sehingga flag ini tidak pernah ter-set oleh sistem.
+  if(ctx && ctx.gabahManualSet) return;
+  const newValue = ProductionCalculationService.computeGabahMasukGiling(ctx.sumberGabah, 0);
   // BUG FIX KRITIS (ditemukan lewat QA end-to-end Playwright): SEBELUMNYA
   // memakai fmtNum(newValue) yang menghasilkan format Indonesia "1.000"
   // (titik sebagai pemisah ribuan). <input type="number"> TIDAK menolak
@@ -5315,6 +5339,12 @@ function gunakanSemuaStok(){
   if(gabahInput){
     const total = ctx.sumberGabah.reduce((s,r)=>s+(Number(r.qty)||0), 0);
     gabahInput.value = total;
+    // BUG-007 FIX: reset flag manual — tombol ini SENGAJA override nilai
+    // field (termasuk jika sebelumnya pernah diisi manual oleh operator),
+    // dan setelah override ini field harus kembali auto-follow Total Qty
+    // untuk perubahan qty berikutnya (konsisten dengan harapan "Gabah
+    // Masuk Giling otomatis mengikuti total" pada Requirement #4b).
+    ctx.gabahManualSet = false;
     calcRendemenPreview();
     calcPKSekamSisa();
   }
@@ -5348,11 +5378,28 @@ function renderSumberGabahPicker(){
   const sourceList = ProductionCalculationService.getAvailableSourcesFIFO(jenisGabah, ctx.id);
   const sourceMap = {}; sourceList.forEach(s => { sourceMap[s.pembelianId] = s; });
 
+  // BUG-007 FIX (KRITIS): setiap <tr> sekarang punya data-row-idx unik, dan
+  // event qty TIDAK LAGI dipasang inline per elemen (oninput="...") — itulah
+  // akar masalah "hanya baris pertama dapat diedit" / karakter hilang saat
+  // mengetik: SETIAP keystroke pada input qty memicu renderSumberGabahPicker()
+  // yang menulis ulang SELURUH box.innerHTML, menghancurkan dan membuat ulang
+  // elemen <input> yang sedang difokus — fokus browser jatuh ke <body>,
+  // sehingga karakter kedua dan seterusnya tidak pernah masuk ke input manapun
+  // (dibuktikan lewat instrumentasi Playwright: document.activeElement
+  // berubah jadi BODY setelah keystroke pertama).
+  //
+  // Diperbaiki dengan EVENT DELEGATION: satu listener 'input' dipasang pada
+  // container tabel (lihat _bindSumberGabahEvents(), dipanggil sekali setelah
+  // box.innerHTML ditulis), bukan inline per elemen. Saat qty diketik,
+  // _handleQtyInputDelegated() HANYA meng-update data + melakukan PATCH DOM
+  // bertarget (indikator baris itu saja, ringkasan, HPP) — TIDAK PERNAH
+  // menulis ulang innerHTML tabel selama proses mengetik berlangsung, sehingga
+  // elemen <input> tidak pernah dihancurkan dan fokus tetap terjaga.
   box.innerHTML = `
     <div class="table-wrap">
       <table>
         <thead><tr><th>Pembelian (Faktur - Supplier)</th><th>Tgl Beli</th><th>Sisa Tersedia</th><th>Harga/Kg (+angkut)</th><th>Qty Dipakai (Kg)</th><th></th></tr></thead>
-        <tbody>
+        <tbody id="sumberGabahTbody">
           ${sumber.map((s,i)=>{
             const opts = getPembelianOptionsForSumber(jenisGabah, s.pembelianId);
             const optionsHtml = ['<option value="">-- Pilih Pembelian --</option>'].concat(
@@ -5381,20 +5428,24 @@ function renderSumberGabahPicker(){
             const errorMsg = rowVal && rowVal.level==='error' ? rowVal.message : '';
             const inputBorderColor = indicator==='red' ? 'var(--red)' : indicator==='yellow' ? 'var(--gold)' : 'var(--line)';
 
+            // data-row-idx = id unik baris ini dalam sesi edit saat ini (stabil
+            // selama baris tidak dihapus/diurutkan ulang — dipakai event
+            // delegation untuk tahu baris mana yang sedang diketik tanpa
+            // bergantung pada closure/index yang bisa basi setelah re-render).
             return `
-              <tr>
-                <td><select onchange="updateSumberGabah(${i}, 'pembelianId', this.value)" style="width:100%;">${optionsHtml}</select></td>
+              <tr data-row-idx="${i}">
+                <td><select data-role="pembelian-select" data-row-idx="${i}" style="width:100%;">${optionsHtml}</select></td>
                 <td style="font-size:0.78rem;color:var(--ink-soft);">${p?fmtDate(p.tanggal):'-'}</td>
-                <td class="num-cell">${p?fmtNum(sisaTampil)+' kg':'-'}</td>
+                <td class="num-cell" data-role="sisa-cell">${p?fmtNum(sisaTampil)+' kg':'-'}</td>
                 <td class="num-cell">${p?fmtRp(hargaTampil):'-'}</td>
                 <td>
                   <div style="display:flex;align-items:center;gap:6px;">
-                    <span title="${indicator==='green'?'Qty sesuai':indicator==='yellow'?'Sisa stok hampir habis (<10%)':'Qty melebihi stok'}">${p?indicatorDot:''}</span>
-                    <input type="number" min="0" value="${s.qty||0}" style="width:100%;border-color:${inputBorderColor};" oninput="updateSumberGabah(${i}, 'qty', this.value)">
+                    <span data-role="indicator-dot" title="${indicator==='green'?'Qty sesuai':indicator==='yellow'?'Sisa stok hampir habis (<10%)':'Qty melebihi stok'}">${p?indicatorDot:''}</span>
+                    <input type="number" min="0" data-role="qty-input" data-row-idx="${i}" value="${s.qty||0}" style="width:100%;border-color:${inputBorderColor};">
                   </div>
-                  ${errorMsg ? `<div style="color:var(--red);font-size:0.74rem;margin-top:3px;">⚠ ${esc(errorMsg)}</div>` : ''}
+                  <div data-role="error-msg" style="color:var(--red);font-size:0.74rem;margin-top:3px;${errorMsg?'':'display:none;'}">⚠ ${esc(errorMsg||'')}</div>
                 </td>
-                <td><button class="btn btn-sm btn-danger" onclick="removeSumberGabahRow(${i})">✕</button></td>
+                <td><button type="button" class="btn btn-sm btn-danger" data-role="remove-row" data-row-idx="${i}">✕</button></td>
               </tr>
             `;
           }).join('')}
@@ -5402,8 +5453,126 @@ function renderSumberGabahPicker(){
       </table>
     </div>
   `;
+  _bindSumberGabahEvents();
   renderRingkasanSumberGabah();
   updateHppPreview();
+}
+
+// BUG-007 FIX: Event delegation — SATU listener per jenis event dipasang pada
+// container tabel, bukan inline onclick/onchange/oninput per elemen. Baris
+// baru (ditambah via addSumberGabahRow(), atau hasil tombol cepat FIFO/Semua
+// Stok) OTOMATIS ikut tertangani tanpa perlu re-binding manual, karena
+// delegation bekerja berdasarkan event bubbling dari elemen manapun di dalam
+// container — termasuk elemen yang baru saja dibuat oleh render berikutnya.
+// Dipanggil setiap kali renderSumberGabahPicker() menulis ulang box.innerHTML
+// (saat baris ditambah/dihapus/sumber dipilih) — TAPI TIDAK dipanggil saat
+// qty diketik (lihat _handleQtyInputDelegated(), yang sengaja menghindari
+// re-render agar listener & fokus tidak pernah terganggu selama mengetik).
+function _bindSumberGabahEvents(){
+  const box = document.getElementById('sumberGabahBox');
+  if(!box || box.dataset.eventsBound === '1') return;
+  box.dataset.eventsBound = '1';
+
+  // Qty diketik — TIDAK memicu re-render (lihat _handleQtyInputDelegated).
+  box.addEventListener('input', (e)=>{
+    const target = e.target.closest('[data-role="qty-input"]');
+    if(!target) return;
+    const idx = Number(target.dataset.rowIdx);
+    _handleQtyInputDelegated(idx, target.value);
+  });
+
+  // Pilihan sumber pembelian berubah — full re-render TETAP diperlukan
+  // (opsi "sisa tersedia" di SEMUA baris lain ikut berubah), tapi event
+  // 'change' pada <select> tidak rawan kehilangan fokus karakter-demi-karakter
+  // seperti pada <input type="number"> yang diketik.
+  box.addEventListener('change', (e)=>{
+    const target = e.target.closest('[data-role="pembelian-select"]');
+    if(!target) return;
+    const idx = Number(target.dataset.rowIdx);
+    updateSumberGabah(idx, 'pembelianId', target.value);
+  });
+
+  // Tombol hapus baris.
+  box.addEventListener('click', (e)=>{
+    const target = e.target.closest('[data-role="remove-row"]');
+    if(!target) return;
+    const idx = Number(target.dataset.rowIdx);
+    removeSumberGabahRow(idx);
+  });
+}
+
+// BUG-007 FIX: handler qty TANPA full re-render. Update data di context,
+// lalu PATCH DOM secara bertarget (indikator + pesan error baris INI saja,
+// ringkasan, HPP) — elemen <input> yang sedang diketik TIDAK PERNAH
+// dihancurkan/dibuat ulang, sehingga fokus & kursor tetap utuh sepanjang
+// proses mengetik, untuk SEMUA baris (bukan hanya baris pertama).
+function _handleQtyInputDelegated(idx, rawValue){
+  const ctx = window._produksiEdit;
+  if(!ctx) return;
+  const row = ctx.sumberGabah[idx];
+  if(!row) return;
+
+  // Business Rule: Qty tidak boleh negatif atau kosong secara struktural di
+  // data (validasi PESAN tetap ditampilkan via ProductionCalculationService,
+  // tapi nilai mentah tetap disimpan apa adanya agar operator bisa melihat
+  // dan memperbaiki sendiri — bukan dipotong paksa tanpa pemberitahuan).
+  row.qty = rawValue === '' ? '' : Number(rawValue);
+
+  const jenisGabah = document.getElementById('pr_jenis')?.value || '';
+
+  // Patch indikator warna + pesan error HANYA untuk baris ini.
+  const tr = document.querySelector(`#sumberGabahTbody tr[data-row-idx="${idx}"]`);
+  if(tr){
+    const p = DB.pembelian.find(x=>x.id===row.pembelianId);
+    if(p){
+      const reservedByOthers = ctx.sumberGabah.filter((x,xi)=>xi!==idx && x.pembelianId===p.id).reduce((sum,x)=>sum+Number(x.qty||0),0);
+      const sisaTampil = getSisaPembelian(p.id, ctx.id) - reservedByOthers;
+      const indicator = ProductionCalculationService.getIndicatorColor(row.qty, sisaTampil);
+      const indicatorDot = { green:'🟢', yellow:'🟡', red:'🔴' }[indicator];
+      const inputBorderColor = indicator==='red' ? 'var(--red)' : indicator==='yellow' ? 'var(--gold)' : 'var(--line)';
+
+      const dotEl = tr.querySelector('[data-role="indicator-dot"]');
+      if(dotEl){
+        dotEl.textContent = indicatorDot;
+        dotEl.title = indicator==='green'?'Qty sesuai':indicator==='yellow'?'Sisa stok hampir habis (<10%)':'Qty melebihi stok';
+      }
+      const inputEl = tr.querySelector('[data-role="qty-input"]');
+      if(inputEl) inputEl.style.borderColor = inputBorderColor;
+
+      const validation = ProductionCalculationService.validateRows(ctx.sumberGabah, jenisGabah, ctx.id);
+      const rowVal = validation[idx];
+      const errorEl = tr.querySelector('[data-role="error-msg"]');
+      if(errorEl){
+        if(rowVal && rowVal.level==='error'){
+          errorEl.textContent = '⚠ ' + rowVal.message;
+          errorEl.style.display = '';
+        } else {
+          errorEl.style.display = 'none';
+        }
+      }
+
+      // Sel "Sisa Tersedia" baris LAIN yang memakai pembelianId sama juga
+      // perlu ikut update (qty baris ini memengaruhi reservedByOthers untuk
+      // baris lain dengan sumber yang sama) — di-patch langsung tanpa
+      // membongkar elemen qty-input baris tsb.
+      ctx.sumberGabah.forEach((other, oi)=>{
+        if(oi===idx || other.pembelianId!==row.pembelianId) return;
+        const otherTr = document.querySelector(`#sumberGabahTbody tr[data-row-idx="${oi}"]`);
+        if(!otherTr) return;
+        const reservedForOther = ctx.sumberGabah.filter((x,xi)=>xi!==oi && x.pembelianId===p.id).reduce((sum,x)=>sum+Number(x.qty||0),0);
+        const sisaForOther = getSisaPembelian(p.id, ctx.id) - reservedForOther;
+        const sisaCell = otherTr.querySelector('[data-role="sisa-cell"]');
+        if(sisaCell) sisaCell.textContent = fmtNum(sisaForOther) + ' kg';
+      });
+    }
+  }
+
+  // Requirement #4 (Total Qty), #5 (Ringkasan realtime), #6 (Gabah Masuk
+  // Giling mengikuti Total Qty), #8 (HPP realtime) — SEMUA dipanggil tanpa
+  // menyentuh box.innerHTML tabel sumber gabah sama sekali.
+  renderRingkasanSumberGabah();
+  updateHppPreview();
+  autoFillGabahMasukGiling();
 }
 
 // Requirement #5 — Ringkasan realtime di bawah tabel sumber gabah.
