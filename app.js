@@ -5025,19 +5025,26 @@ function editProduksi(id){
         </div>
         <div class="field">
           <label>Gabah Masuk Giling (Kg) — Input Tahap 1</label>
-          <input type="number" id="pr_gabah" value="${row.gabah||0}" min="0"
-            oninput="calcRendemenPreview(); validateSumberGabah(); calcPKSekamSisa();">
+          <input type="number" id="pr_gabah" value="${row.gabah||0}" min="0" readonly
+            style="background:#F9FAFB;cursor:not-allowed;">
+          <p class="help-text" style="margin-top:4px;">Otomatis = Total Qty Dipakai dari sumber gabah di bawah.</p>
         </div>
       </div>
 
       <div class="section-divider">Sumber Gabah &amp; HPP</div>
       <p class="help-text" style="margin-top:-4px;">Pilih Jenis Gabah untuk memfilter daftar faktur, lalu klik "+ Tambah Sumber Gabah" untuk memilih faktur pembelian secara manual. HPP dihitung realtime dari rata-rata tertimbang harga gabah faktur yang dipilih.</p>
       <div id="sumberGabahBox"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center;">
         <button class="btn btn-secondary btn-sm" style="width:auto;" onclick="addSumberGabahRow()">+ Tambah Sumber Gabah</button>
-        <button class="btn btn-secondary btn-sm" style="width:auto;" onclick="isiOtomatisFIFO()" title="Alokasikan Qty otomatis (FIFO) hingga target Gabah Masuk Giling tercapai">⚡ Isi Otomatis (FIFO)</button>
-        <button class="btn btn-secondary btn-sm" style="width:auto;" onclick="gunakanSemuaStok()" title="Semua Qty Dipakai = Sisa Tersedia">🎯 Gunakan Semua Stok</button>
         <button class="btn btn-secondary btn-sm" style="width:auto;" onclick="resetQtySumberGabah()" title="Kosongkan Qty tanpa menghapus daftar sumber">🧹 Reset Qty</button>
+        <button class="btn btn-secondary btn-sm" style="width:auto;" onclick="toggleAksiLanjutanProduksi()" id="btnAksiLanjutanToggle">⋯ Aksi Lanjutan</button>
+      </div>
+      <div id="aksiLanjutanProduksiBox" style="display:none;margin-top:8px;padding:10px;background:var(--paper-2);border-radius:8px;">
+        <p class="help-text" style="margin:0 0 8px;">Operator hampir selalu memilih sumber gabah secara manual. Aksi berikut hanya untuk kasus khusus (alokasi cepat berbasis FIFO):</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-sm" style="width:auto;" onclick="isiOtomatisFIFO()" title="Alokasikan Qty otomatis (FIFO) hingga target yang Anda tentukan tercapai">⚡ Isi Otomatis (FIFO)</button>
+          <button class="btn btn-secondary btn-sm" style="width:auto;" onclick="gunakanSemuaStok()" title="Semua Qty Dipakai = Sisa Tersedia">🎯 Gunakan Semua Stok</button>
+        </div>
       </div>
       <div id="ringkasanSumberGabahBox"></div>
 
@@ -5312,21 +5319,49 @@ function autoFillGabahMasukGiling(){
 
 // Requirement #4a — "⚡ Isi Otomatis (FIFO)": alokasikan qty FIFO hingga
 // target produksi (nilai yang sudah ada di Gabah Masuk Giling) tercapai.
+// STABILIZATION: toggle visibility menu "Aksi Lanjutan" (Isi Otomatis FIFO,
+// Gunakan Semua Stok) — default tersembunyi karena operator hampir selalu
+// memilih sumber gabah secara manual satu per satu, sesuai business process
+// baru. Memakai pola toggle visibility via style.display yang sudah
+// konsisten dipakai di tempat lain pada aplikasi (bukan pola UI baru).
+function toggleAksiLanjutanProduksi(){
+  const box = document.getElementById('aksiLanjutanProduksiBox');
+  const btn = document.getElementById('btnAksiLanjutanToggle');
+  if(!box) return;
+  const isHidden = box.style.display === 'none' || !box.style.display;
+  box.style.display = isHidden ? '' : 'none';
+  if(btn) btn.textContent = isHidden ? '⋯ Sembunyikan Aksi Lanjutan' : '⋯ Aksi Lanjutan';
+}
+
+// STABILIZATION FIX: SEBELUMNYA fungsi ini membaca target alokasi dari
+// field pr_gabah (operator mengetik target, lalu klik tombol). Field
+// tersebut SEKARANG READONLY (business process baru: Gabah Masuk Giling
+// tidak boleh diketik manual, selalu = SUM(Qty Dipakai)) — sehingga
+// `target` di versi lama akan SELALU sama dengan Total Qty Dipakai saat
+// ini (bukan target baru yang ingin dicapai operator), membuat tombol
+// ini tidak berguna. Diperbaiki dengan meminta target lewat prompt()
+// sederhana — tanpa menambah elemen HTML baru ke form (sesuai instruksi
+// "jangan menambah fitur baru" / "jangan redesign UI"), murni mengganti
+// SUMBER nilai target dari field yang sudah tidak bisa dipakai lagi.
 function isiOtomatisFIFO(){
   const ctx = window._produksiEdit;
   const jenisGabah = document.getElementById('pr_jenis')?.value;
   if(!jenisGabah){ showToast('Pilih Jenis Gabah terlebih dahulu.'); return; }
-  const target = Number(document.getElementById('pr_gabah')?.value)||0;
-  if(target <= 0){ showToast('Isi target Gabah Masuk Giling terlebih dahulu, atau gunakan "🎯 Gunakan Semua Stok".'); return; }
+
+  const totalSaatIni = (ctx.sumberGabah||[]).reduce((s,r)=>s+(Number(r.qty)||0), 0);
+  const input = prompt('Target Gabah Masuk Giling (Kg) — akan dialokasikan otomatis secara FIFO:', totalSaatIni > 0 ? totalSaatIni : '');
+  if(input === null) return; // operator membatalkan
+  const target = Number(input)||0;
+  if(target <= 0){ showToast('Target harus lebih besar dari 0, atau gunakan "🎯 Gunakan Semua Stok".'); return; }
 
   const result = ProductionCalculationService.autoAllocateFIFO(jenisGabah, target, ctx.id);
   ctx.sumberGabah = result.sumberGabah;
   renderSumberGabahPicker();
-  // BUG-009 FIX: Gabah Masuk Giling SELALU mengikuti Total Qty Dipakai —
-  // dipanggil di sini agar field ini konsisten dengan hasil alokasi
-  // sesungguhnya (mis. jika stok TIDAK mencukupi target, total qty yang
-  // teralokasi akan LEBIH KECIL dari target awal yang diketik; field harus
-  // mencerminkan angka yang sesungguhnya teralokasi, bukan target awal).
+  // Gabah Masuk Giling SELALU mengikuti Total Qty Dipakai — dipanggil di
+  // sini agar field ini konsisten dengan hasil alokasi sesungguhnya (mis.
+  // jika stok TIDAK mencukupi target, total qty yang teralokasi akan
+  // LEBIH KECIL dari target awal; field harus mencerminkan angka yang
+  // sesungguhnya teralokasi, bukan target awal).
   autoFillGabahMasukGiling();
   if(!result.tercukupi){
     showToast(`⚠ Stok tidak mencukupi. Kurang ${fmtNum(result.kurang)} kg dari target.`);

@@ -4,7 +4,7 @@
    whenever index.html / app.js / manifest / icons change so
    users get the update.
    ============================================================ */
-const CACHE_VERSION = 'erp-setia-dadi-v70-fix-bug009-business-process';
+const CACHE_VERSION = 'erp-setia-dadi-v71-stabilization-produksi';
 const APP_SHELL = [
   './index.html',
   './app.js',

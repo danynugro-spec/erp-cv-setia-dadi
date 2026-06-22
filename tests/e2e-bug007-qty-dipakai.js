@@ -123,17 +123,19 @@ const { chromium } = require('playwright');
   const gabahValue = await page.locator('#pr_gabah').inputValue();
   check('Gabah Masuk Giling = 3100 (600+500+2000), bukan nilai lama 3500', gabahValue === '3100', `actual="${gabahValue}"`);
 
-  console.log('\n--- BUG-009: Gabah Masuk Giling SELALU mengikuti Total Qty (tidak ada manual override) ---');
-  await page.locator('#pr_gabah').click();
-  await page.locator('#pr_gabah').fill('');
-  await page.keyboard.type('9999', { delay: 60 });
-  await page.waitForTimeout(200);
+  console.log('\n--- STABILIZATION: Gabah Masuk Giling READONLY, tidak bisa diketik manual ---');
+  const isReadonly = await page.evaluate(() => document.getElementById('pr_gabah').readOnly);
+  check('Field pr_gabah bersifat readonly', isReadonly === true);
+
+  // Verifikasi field TETAP sinkron realtime walau diklik (readonly tidak
+  // menghalangi update programatik dari perubahan qty sumber gabah).
   await inputs2.nth(1).click();
   await inputs2.nth(1).fill('');
   await page.keyboard.type('100', { delay: 60 });
   await page.waitForTimeout(300);
   const gabahAfterQtyChange = await page.locator('#pr_gabah').inputValue();
-  check('Gabah Masuk Giling TERTIMPA jadi 2700 (mengikuti Total Qty, bukan tetap 9999)',
+  // Total setelah perubahan: 600 (baris 1) + 100 (baris 2) + 2000 (baris 3) = 2700
+  check('Gabah Masuk Giling tetap sinkron realtime (2700) meski field readonly',
     gabahAfterQtyChange === '2700', `actual="${gabahAfterQtyChange}"`);
 
   console.log('\n--- Business Rule: validasi qty melebihi Sisa Tersedia ---');
