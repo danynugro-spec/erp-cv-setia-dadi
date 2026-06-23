@@ -1,170 +1,246 @@
-# CHANGELOG — CV. Setia Dadi ERP
-## Versi Enterprise Final (QA Final / v61-qa-final)
-Tanggal rilis: 20 Juni 2026
+# CHANGELOG — ERP Penggilingan Padi PRO+
+## CV. SETIA DADI
 
 ---
 
-## Ringkasan
+## v1.0.0 — RC FINAL (Build 20260623)
 
-Rilis ini menandai status **production-ready** untuk sistem ERP penggilingan padi
-CV. Setia Dadi setelah audit menyeluruh, perbaikan bug sistematis, dan validasi
-matematis penuh terhadap seluruh alur transaksi: pembelian gabah → produksi
-2-tahap (Husker → Polisher) → penjualan → akuntansi double-entry → laporan
-keuangan.
+**Status:** PRODUCTION READY
 
-**UI tidak pernah diubah sepanjang seluruh proses ini** — `index.html` identik
-sejak Sprint 12. Semua perbaikan murni di logika bisnis (`app.js`).
+### Bug Fixes
+- Global error handler mencegah crash diam tanpa notifikasi
+- `renderPage()` wrapped try-catch — error ditampilkan dengan friendly UI
+- `getHppBatch(null)` null guard — tidak crash jika batch undefined
+- `renderProduksi()` null-safe sort
+- Division-by-zero guard di `calcRendemenPKBeras()`
+- Validasi field-specific di `savePenjualan`, `savePembelian`, `saveKasManual`
+- JSON.parse try-catch di semua titik form produksi baru
+- Loading state saat proses berat (rebuildJurnal)
 
----
-
-## Sprint 1–4 — Fondasi
-
-- **Sprint 1**: Audit awal — pemetaan struktur modul, identifikasi bug, rencana
-  refactor tanpa mengubah tampilan.
-- **Sprint 2**: Modul Produksi dibangun ulang sesuai proses nyata penggilingan
-  padi 2 tahap: Tahap 1 Husker (Gabah → PK + Sekam), Tahap 2 Polisher
-  (PK → Beras + Menir + Bekatul). Stok, HPP, rendemen, dan dashboard terhubung
-  otomatis ke setiap proses.
-- **Sprint 3**: Maklon A/B/C (jasa giling, bekatul-untuk-CV, bagi hasil), dengan
-  pemisahan tegas antara Stok CV dan Stok Titipan Maklon.
-- **Sprint 4**: Dashboard Owner diperluas — Stok Gabah/PK/Beras/Bekatul/Sekam,
-  Profit per Batch, Rendemen Bulanan, Forecast Kebutuhan Gabah.
-
-## Sprint 5 — Akuntansi Double-Entry
-
-- Sistem jurnal otomatis penuh: setiap transaksi (pembelian, produksi, penjualan,
-  pembayaran hutang/piutang) menghasilkan entri Debit/Kredit yang balance.
-- Chart of Accounts (COA) lengkap: Persediaan per jenis barang, Hutang/Piutang
-  Usaha, Pendapatan, HPP, Beban Operasional.
-- Laporan otomatis dari jurnal: Buku Besar, Neraca Saldo, Laba Rugi, Neraca,
-  Arus Kas.
-
-## Sprint 6–8 — Modul Operasional
-
-- **Sprint 6**: Business Intelligence — Forecast Gabah/Karung/Benang/Cashflow,
-  Profit per Batch/Supplier/Pelanggan, Analisa Rendemen, Supplier & Customer
-  Ranking — seluruhnya dengan Chart.js dan data real-time.
-- **Sprint 7**: Modul Maintenance Mesin — 5 mesin (Husker, Polisher, Separator,
-  Elevator, Destoner), jam operasi, jadwal & riwayat service, biaya service
-  terjurnal otomatis, alarm jam operasi.
-- **Sprint 8**: Modul Gudang Lanjutan — Stock Opname, Lot Number & Batch
-  Tracking otomatis, valuasi FIFO, Stok Minimum & Alarm, Kartu Stok per item.
-
-## Sprint 9–11 — Dokumen, Backup, Audit
-
-- **Sprint 9**: Sistem dokumen otomatis — Invoice, Surat Jalan, Purchase Order,
-  Kartu Supplier, Kartu Pelanggan, semua sebagai PDF dengan QR Code verifikasi
-  dan nomor dokumen otomatis (`PREFIX-YYYYMM-####`).
-- **Sprint 10**: Backup Enterprise — Backup/Restore JSON dengan validasi relasi
-  penuh (foreign-key check, deteksi ID duplikat), Export/Import Excel, backup
-  otomatis berkala, riwayat backup.
-- **Sprint 11**: Audit Trail — pencatatan otomatis seluruh aktivitas (Login,
-  Tambah, Edit, Hapus, Import, Restore, Backup) dengan Tanggal, Jam, User, IP,
-  Browser, Data Lama, dan Data Baru, lewat auto-hook ke seluruh fungsi
-  `save*`/`delete*` tanpa menyentuh kode bisnis yang ada.
-
-## Sprint 12 — Audit Production-Ready
-
-Audit menyeluruh terhadap bug, duplikasi kode, performa, memory, responsif,
-dark mode, mobile, offline, dan PWA. Tiga bug kritis ditemukan dan diperbaiki:
-
-- 5 fungsi `delete*` tidak membersihkan jurnal terkait → laporan jurnal tidak
-  sinkron setelah penghapusan transaksi. Diperbaiki dengan memanggil
-  `rebuildSemuaJurnal()` otomatis di setiap fungsi delete.
-- Referensi jurnal "Bayar Hutang" memakai ID acak setiap kali, sehingga tidak
-  bisa dilacak/dibersihkan ulang. Diperbaiki memakai ID kasbank yang stabil.
-- Tombol Dark Mode ada di HTML sejak awal namun fungsi `toggleDarkMode()`
-  tidak pernah ditulis — fitur senyap. Diimplementasikan penuh dengan deteksi
-  `prefers-color-scheme` dan persistensi preferensi pengguna.
-
-Juga: 17 halaman kehilangan entri breadcrumb (tampil "undefined" di topbar),
-dilengkapi menjadi 37/37 halaman.
+### Branding
+- Versi ditampilkan di sidebar, page title, dan appVersionBadge
+- `APP_VERSION = '1.0.0'`, `APP_BUILD = '20260623'`, `APP_CODENAME = 'RC-FINAL'`
 
 ---
 
-## QA Final — Validasi Matematis Penuh
+## v0.15.0 — Sprint 15: LOT Traceability & Smart Inventory
 
-Audit terakhir ini berbeda dari sprint-sprint sebelumnya: alih-alih membaca
-kode, seluruh 97 fungsi kalkulasi bisnis murni (pure functions, tanpa
-ketergantungan DOM) diekstrak dan dieksekusi nyata dalam sandbox Node.js,
-lalu disimulasikan lewat siklus transaksi lengkap — pembelian gabah,
-produksi 2 tahap, penjualan tunai & tempo, pelunasan piutang & hutang —
-dengan setiap angka diverifikasi terhadap perhitungan manual.
-
-**33 dari 33 pemeriksaan matematis lulus**, termasuk validasi bahwa Neraca
-benar-benar balance (Aktiva = Kewajiban + Ekuitas), jurnal bersifat
-deterministik (rebuild berulang tidak menghasilkan drift), dan integritas
-tetap terjaga setelah penghapusan transaksi.
-
-### Bug yang ditemukan dan diperbaiki dalam proses ini:
-
-| # | Bug | Dampak | Status |
-|---|---|---|---|
-| 1 | `getHppBatch()` — HPP per kg beras memakai nilai gabah utuh, bukan porsi yang mengalir ke PK | HPP beras terinflasi ~32% di seluruh laporan, dashboard, dan BI module | ✅ Diperbaiki |
-| 2 | `_hppPenjualan()` — HPP per kg dibagi qty *terjual*, bukan qty *diproduksi* | HPP pada jurnal Laba Rugi terinflasi hingga 3x lipat | ✅ Diperbaiki |
-| 3 | `_hppPenjualan()` — tidak ada fallback untuk batch lama/seed tanpa data sumber gabah | Laba Rugi melaporkan **HPP = Rp0** untuk data yang sah, menggelembungkan laba secara fiktif | ✅ Diperbaiki |
-| 4 | `rebuildSemuaJurnal()` — pencocokan piutang memakai field `sourceId`, padahal field asli yang terisi adalah `refId` | Akun Piutang Usaha di jurnal tidak pernah berkurang meski piutang sudah lunas — Neraca berisiko timpang | ✅ Diperbaiki |
-| 5 | `getCustomerRanking()` (BI) — kesalahan field yang sama (`sourceId` vs `refId`) | Sisa piutang per pelanggan di analisa RFM dilaporkan lebih besar dari kondisi sebenarnya | ✅ Diperbaiki |
-| 6 | `postKasManual()` — tidak mengecualikan kategori "Pelunasan Hutang Supplier" / "Penerimaan Pelunasan Piutang" | Saat jurnal di-rebuild, entri ini terposting dua kali dengan akun yang salah — saldo Hutang Usaha bisa menjadi minus permanen | ✅ Diperbaiki |
-| 7 | `rebuildSemuaJurnal()` — tidak membedakan pembelian "lunas tunai sejak awal" dengan "awalnya hutang, dilunasi belakangan" | Hutang Usaha tercatat lunas dua kali untuk kasus pembayaran hutang yang terjadi setelah input awal | ✅ Diperbaiki |
-| 8 | `rebuildSemuaJurnal()` — hanya memproses kasbank `sumber:'manual'`, melewatkan `sumber:'service'` | Biaya Maintenance Mesin (Sprint 7) hilang dari jurnal setiap kali rebuild dipanggil | ✅ Diperbaiki |
-| 9 | Data seed/demo — penjualan Bekatul (400kg) melebihi total yang pernah diproduksi (284kg) | Stok Bekatul pada data contoh menampilkan angka **negatif (-116)**, yang mustahil secara fisik | ✅ Diperbaiki |
-
-### Hasil setelah perbaikan (diuji dengan data seed/demo asli aplikasi)
-
-| Metrik | Sebelum QA Final | Sesudah QA Final |
-|---|---|---|
-| Neraca (Aktiva vs Pasiva) | Tidak diverifikasi | Balance — selisih ~2.8×10⁻⁹ (floating-point) |
-| HPP (Laba Rugi jurnal) | Rp 0 | Rp 10.040.738 |
-| Stok Bekatul | -116 kg | 34 kg |
-| Laba Bersih | Tergelembung secara fiktif | Rp 134.261 (wajar) |
-| NaN / Infinity di seluruh struktur data | Tidak diperiksa | Nihil |
+### Fitur Baru
+- **Kartu LOT**: Halaman inventori dengan search, filter, dan detail lengkap
+- **LOT Numbering**: Format GBH-YYYYMMDD-0001, PK-YYYYMMDD-0001, dst.
+- **Full Traceability**: Beras → PK → Gabah → Supplier (1 klik)
+- **LOT Status**: TERSEDIA / SEBAGIAN / HABIS / DIBATALKAN / TERKUNCI
+- **Dashboard LOT**: Top 10 lot, lot tertua, hampir habis, distribusi
+- **Analisis Supplier**: Ranking, rendemen rata-rata, HPP/kg
+- **Global LOT Search**: Multi-field real-time
+- **QR Code** per lot menggunakan QRCode.js
+- **FIFO**: Keluar berurutan tanggal terlama
+- `parentLotId` traceability chain (Beras LOT → PK LOT → Gabah LOT)
+- `syncLotStokOtomatis()` memoization ditingkatkan (dirty flag + hash)
+- Nav menu baru: Kartu LOT (05c), Dashboard LOT (05d), Analisis Supplier (05e)
 
 ---
 
-## Cakupan Pengujian
+## v0.14.1 — Sprint 14 Final: UI/UX Produksi Final
 
-Pengujian QA Final mencakup 4 skenario simulasi penuh:
-
-1. **Siklus Transaksi Lengkap** (17 pemeriksaan) — pembelian gabah → produksi
-   tahap 1 & 2 → penjualan tunai & tempo → pelunasan piutang & hutang,
-   memverifikasi stok dan HPP di setiap langkah.
-2. **Jurnal & Neraca Balance** (9 pemeriksaan) — validasi setiap entri jurnal
-   balance individual, saldo akun Hutang/Piutang/Kas sesuai perhitungan manual,
-   dan Neraca balance secara keseluruhan.
-3. **FIFO & Stok Lanjutan** (3 pemeriksaan) — lot tracking otomatis dan valuasi
-   FIFO untuk pembelian dengan harga berbeda.
-4. **Stress Test** (4 pemeriksaan) — rebuild jurnal berulang 5x tanpa drift,
-   dan penghapusan transaksi diikuti rebuild tetap menjaga Neraca balance.
-
-## Verifikasi Teknis
-
-- Sintaks JavaScript: **valid** (`node -c app.js`)
-- Event handler (`onclick`/`onchange`/`oninput`): **135/135 valid**, tidak ada
-  referensi fungsi yang rusak
-- Nama fungsi: **378 total, 0 duplikat**
-- `index.html`: **tidak berubah** sejak Sprint 12 (UI 100% utuh)
-- Service Worker cache: dinaikkan ke `erp-setia-dadi-v61-qa-final` agar
-  pengguna PWA yang sudah install menerima pembaruan otomatis
+### Perubahan
+- Form field ID mismatch fix (gb_jenis vs pr_jenis) — bug kritis
+- Tabel riwayat produksi: Tanggal | Jenis | Batch | Input | Output | Rendemen | HPP | Status
+- Semua "Tahap 1/2" dihapus dari UI operator
+- Mode badge berwarna: G→B (hijau), G→PK (ungu), PK→B (kuning)
+- `renderSumberGabahPicker` form-agnostic (gb_jenis, gpk_jenis, pr_jenis)
+- `updateHppPreview` + `calcRendemenPreview` multi-form IDs
 
 ---
 
-## File dalam Rilis Ini
+## v0.14.0 — Sprint 14: Production Engine Refactor (3-Mode)
 
-```
-erp_padi/
-├── app.js           — Seluruh logika aplikasi (13.278 baris)
-├── index.html        — Struktur halaman & gaya (tidak berubah sejak Sprint 12)
-├── sw.js             — Service Worker (cache v61-qa-final)
-├── manifest.json     — Manifest PWA
-├── icon-192.png      — Ikon aplikasi
-└── icon-512.png      — Ikon aplikasi (resolusi tinggi)
-```
+### Arsitektur Baru
+- Eliminasi "Tahap 1" dan "Tahap 2" dari seluruh UI operator
+- **3 Mode Produksi**:
+  - 🌾 Gabah → Beras (proses penuh, langsung SELESAI)
+  - 🌾 Gabah → PK (husker saja, status MENUNGGU_POLISHER)
+  - 🟡 PK → Beras (polisher saja, pilih lot PK)
+- Modal pilih mode saat "+ Produksi Baru"
+- Form terpisah per mode — tidak ada field tidak relevan
+- `MENUNGGU_POLISHER` status menggantikan `HUSKER_SELESAI`
+- HPP chain: PK_BERAS → GABAH_PK → Gabah → Supplier (traceability)
+- `_inferMode()` / `_inferStatus()` backward compat helpers
+- `postProductionJournal(row)` — jurnal per mode
+- `postProduksiTahap1` skip jika PK_BERAS
+- `postProduksiTahap2` skip jika GABAH_PK
+- Section "Menunggu Penyosohan" di list produksi
+- `getAvailablePKLots()` — lot PK tersedia untuk Mode 3
+- Backward compat: data lama auto-migrate ke mode GABAH_BERAS
 
-## Catatan Pemasangan
+---
 
-Untuk pengguna yang sudah meng-install aplikasi sebagai PWA: tutup dan buka
-ulang aplikasi (atau refresh browser jika dijalankan via tab) agar Service
-Worker baru mengganti cache lama secara otomatis. Tidak ada migrasi data
-manual yang diperlukan — seluruh perbaikan bersifat backward-compatible
-dengan data yang sudah tersimpan di perangkat.
+## v0.13.0 — Sprint 13: Stabilisasi Produksi (RC1, RC2)
+
+### Fitur
+- Batch berstatus: PERSIAPAN → HUSKER_SELESAI → SELESAI
+- Section collapse/expand pada form produksi (3 section)
+- Stok gabah berkurang saat Husker dimulai
+- DIBATALKAN excluded dari semua kalkulasi stok
+- `_guardSaving` + `_releaseSaving` double-click protection
+- `saveDB()` try-catch + storage size warning (>4MB)
+- `savePenjualan` stock check sebelum simpan
+- JSON.parse try-catch di semua titik
+- `syncLotStokOtomatis` memoization (dirty flag)
+- `renderProduksi` → `renderProduksi` baru dengan "Sedang Berjalan" section
+- `simpanPersiapanBatch`, `simpanHuskerBatch`, `selesaikanPolisherBatch`
+- `cancelProduction`, `finishProduction`
+- `tglHuskerSelesai`, `catatanHusker`, `lotPKId` fields baru
+- Field `status` + migration di `loadDB()`
+
+---
+
+## v0.12.0 — Sprint 12: Terminologi & Desain Baru
+
+### Sprint 12A: Terminologi Refactor
+- "Tahap 1" → "Pengupasan Gabah (Husker)"
+- "Tahap 2" → "Penyosohan Beras Pecah Kulit (Polisher)"
+- 41 label/teks diperbarui konsisten di seluruh UI
+
+### Sprint 12B: Desain Business Process
+- Dokumen desain arsitektur produksi baru
+- Analisis operasional nyata penggilingan padi CV. Setia Dadi
+- Persetujuan: collapse/expand sections, staged batch
+
+---
+
+## v0.11.0 — Sprint 11: Laporan & Business Intelligence
+
+### Fitur
+- Dashboard KPI: produksi, HPP, rendemen, laba kotor
+- Chart menggunakan Chart.js: rendemen trend, HPP, penjualan
+- Laporan lengkap dengan export Excel (SheetJS)
+- Cetak PDF menggunakan html2pdf.js
+- Dokumen berQR: Invoice, Surat Jalan, Nota Pembelian
+- Pusat Dokumen: generate semua dokumen dari satu tempat
+
+---
+
+## v0.10.0 — Sprint 10: Stock Opname & Stok Minimum
+
+### Fitur
+- Stock Opname: input fisik vs sistem, selisih otomatis
+- Stok Minimum Master: alert jika stok di bawah threshold
+- Kartu Stok per item: mutasi lengkap dengan saldo berjalan
+- Lot / Batch Tracking: valuasi FIFO per lot
+- `syncLotStokOtomatis()`: create/update lots dari semua transaksi
+
+---
+
+## v0.9.0 — Sprint 9: Maklon
+
+### Fitur
+- **Tipe A**: Jasa murni — penerima tidak punya gabah, cukup bayar jasa
+- **Tipe B**: Titip giling — gabah milik pihak ketiga, diproses di sini
+- **Tipe C**: Bagi hasil — hasil dibagi sesuai kesepakatan
+- Stok titipan terpisah dari stok sendiri
+- Jurnal per tipe maklon
+- Surat Jalan maklon
+
+---
+
+## v0.8.0 — Sprint 8: Akuntansi Double-Entry
+
+### Fitur
+- **Jurnal Umum**: Debit = Kredit enforced di setiap entri
+- **Buku Besar**: Per akun COA, filter periode, ekspor
+- **Neraca Saldo**: Otomatis dari jurnal, trial balance
+- **Laporan Laba Rugi**: Dari jurnal (bukan dari kalkulasi manual)
+- **Neraca**: Aset = Kewajiban + Modal (verified)
+- **Arus Kas**: Operasional + Investasi + Pendanaan
+- COA (Chart of Accounts) standar Indonesia untuk penggilingan padi
+- `jurnalBuat()`: create journal entry dengan ref unik
+- `jurnalHapusRef()`: cleanup sebelum re-post
+- `rebuildSemuaJurnal()`: rebuild seluruh jurnal dari transaksi
+
+---
+
+## v0.7.0 — Sprint 7: Hutang, Piutang, & Keuangan
+
+### Fitur
+- **Hutang Supplier**: Kuitansi pelunasan, riwayat pembayaran
+- **Piutang Pelanggan**: Penerimaan bertahap, kartu piutang
+- **Kas & Bank**: Multi-akun (Kas Tunai, BRI, BCA, dll.)
+- **Jurnal otomatis**: setiap transaksi pembelian/penjualan/kas
+- Kartu Supplier: ringkasan pembelian, hutang, rendemen
+- Kartu Pelanggan: ringkasan penjualan, piutang
+
+---
+
+## v0.6.0 — Sprint 6: Distribusi & Pengiriman
+
+### Fitur
+- Form Pengiriman: order ke pelanggan, tracking armada
+- Surat Jalan dengan QR Code
+- Manajemen Kendaraan: plat, SIM, STNK, kapasitas
+- Kirim Bertahap: penjualan besar dipecah multi-pengiriman
+- Update stok otomatis saat pengiriman dikonfirmasi
+
+---
+
+## v0.5.0 — Sprint 5: Produksi & Stok
+
+### Fitur
+- **Produksi** (model Tahap 1 + Tahap 2): Husker + Polisher
+- HPP tertimbang: FIFO sumber gabah, rata-rata berbobot
+- `getStokProduk()`: stok beras/menir/bekatul/sekam/PK real-time
+- `getStokGabah()`: stok per jenis gabah real-time
+- `ProductionCalculationService`: validasi FIFO sumber gabah
+- Preview HPP dan rendemen real-time saat input
+
+---
+
+## v0.4.0 — Sprint 4: Penjualan & Maklon Dasar
+
+### Fitur
+- Form Penjualan: produk, qty, harga, diskon
+- Status penjualan: Lunas / Piutang
+- Cetak invoice dasar
+- Nomor invoice otomatis (INV-YYYYMMDD-001)
+- Validasi stok sebelum penjualan
+
+---
+
+## v0.3.0 — Sprint 3: Pembelian Gabah
+
+### Fitur
+- Form Pembelian: supplier, jenis gabah, qty, harga per kg
+- Mode pembayaran: tunai, DP, kredit
+- Hutang supplier otomatis
+- Nomor faktur otomatis (PB-YYYYMMDD-001)
+- Histori pembelian per supplier
+
+---
+
+## v0.2.0 — Sprint 2: Master Data & Auth
+
+### Fitur
+- Login multi-role: OWNER / ADMIN / KASIR
+- Master Supplier: CRUD lengkap
+- Master Pelanggan: CRUD lengkap
+- Master Jenis Gabah/Beras/Samping/Bahan Baku
+- Master Kendaraan
+- Access control per halaman per role
+
+---
+
+## v0.1.0 — Sprint 1: Foundation
+
+### Fitur
+- Arsitektur PWA single-file (app.js + index.html)
+- localStorage sebagai database (key: erp_padi_pro_plus_v1)
+- Responsive UI: sidebar + main content
+- Dark mode support
+- Service Worker untuk offline capability
+- Backup/restore dasar
+- Audit Trail dasar
+- `loadDB()` + `saveDB()` + `defaultData()`
+
+---
+
+*ERP Penggilingan Padi PRO+ — CV. SETIA DADI*

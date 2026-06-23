@@ -1,0 +1,29 @@
+LISENSI PERANGKAT LUNAK
+ERP Penggilingan Padi PRO+ v1.0.0
+
+Copyright © 2026 CV. SETIA DADI
+Semua Hak Dilindungi.
+
+KETENTUAN PENGGUNAAN:
+
+1. Perangkat lunak ini dikembangkan khusus untuk kebutuhan operasional
+   CV. SETIA DADI, usaha penggilingan padi yang berlokasi di Indonesia.
+
+2. Perangkat lunak ini TIDAK BOLEH didistribusikan, dijual, disewakan,
+   atau diberikan kepada pihak lain tanpa izin tertulis dari CV. SETIA DADI.
+
+3. Modifikasi terhadap kode sumber hanya boleh dilakukan oleh pihak yang
+   ditunjuk secara resmi oleh CV. SETIA DADI.
+
+4. Perangkat lunak ini disediakan "sebagaimana adanya" tanpa jaminan
+   apapun, baik tersurat maupun tersirat.
+
+5. CV. SETIA DADI tidak bertanggung jawab atas kerugian yang timbul
+   akibat penggunaan perangkat lunak ini oleh pihak yang tidak berwenang.
+
+TEKNOLOGI:
+Dibangun dengan teknologi web standar (HTML5, CSS3, JavaScript ES6+).
+Menggunakan localStorage browser sebagai media penyimpanan data.
+Berjalan sepenuhnya offline tanpa memerlukan server atau internet.
+
+Kontak: CV. SETIA DADI
